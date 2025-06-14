@@ -1,0 +1,47 @@
+{
+  "name": "ai-code-reviewer",
+  "version": "1.0.0",
+  "description": "AI-Powered Code Review Assistant - Sprint 1",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "build": "cd frontend && npm run build",
+    "start": "cd frontend && npm start",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && pip install -r requirements.txt",
+    "docker:up": "docker-compose up --build",
+    "docker:down": "docker-compose down",
+    "test:frontend": "cd frontend && npm test",
+    "test:backend": "cd backend && python -m pytest",
+    "lint:frontend": "cd frontend && npm run lint",
+    "lint:backend": "cd backend && flake8 app/",
+    "format:backend": "cd backend && black app/",
+    "type-check:backend": "cd backend && mypy app/"
+  },
+  "keywords": [
+    "ai",
+    "code-review",
+    "static-analysis",
+    "nextjs",
+    "fastapi",
+    "typescript",
+    "python"
+  ],
+  "author": "AI Code Reviewer Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/ai-code-reviewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/ai-code-reviewer/issues"
+  },
+  "homepage": "https://github.com/your-username/ai-code-reviewer#readme"
+}
