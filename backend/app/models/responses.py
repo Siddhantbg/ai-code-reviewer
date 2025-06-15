@@ -174,10 +174,11 @@ class CodeAnalysisResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Response model for health check endpoint."""
-    
-    status: str = Field(..., description="Health status of the service")
-    message: str = Field(..., description="Health check message")
+    status: str = Field(..., description="Health status of the API")
+    message: str = Field(..., description="Health status message")
     version: str = Field(..., description="API version")
+    ai_model_loaded: Optional[bool] = Field(default=None, description="Whether the AI model is loaded")
+    ai_model_path: Optional[str] = Field(default=None, description="Path to the AI model file")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Current timestamp")
 
     class Config:

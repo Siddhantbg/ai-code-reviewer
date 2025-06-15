@@ -1,6 +1,7 @@
 from typing import Dict, List, Any, Optional
 import re
 import uuid
+import logging
 from datetime import datetime
 
 from app.models.requests import SupportedLanguage, AnalysisType
@@ -11,6 +12,11 @@ from app.models.responses import (
     IssueSeverity,
     IssueType
 )
+from app.services.ai_service import ai_analyzer
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class CodeAnalyzerService:
@@ -74,10 +80,25 @@ class CodeAnalyzerService:
     ) -> Dict[str, Any]:
         """
         Analyze the provided code and return issues, metrics, and suggestions.
-        This is a stub implementation that will be enhanced with AI in future sprints.
+        Uses the DeepSeek Coder AI model for comprehensive code analysis.
         """
+        try:
+            # Use AI model for code analysis
+            logger.info(f"Analyzing code with AI model: {language.value}, analysis type: {analysis_type.value}")
+            ai_result = ai_analyzer.analyze_code(code, language, analysis_type)
+            
+            # If AI analysis succeeded, return the result
+            if ai_result and "issues" in ai_result:
+                logger.info(f"AI analysis completed successfully with {len(ai_result['issues'])} issues")
+                return ai_result
+            
+            # If AI analysis failed, fall back to pattern matching
+            logger.warning("AI analysis failed, falling back to pattern matching")
+        except Exception as e:
+            logger.error(f"Error during AI analysis: {str(e)}")
+            logger.warning("Falling back to pattern matching due to AI error")
         
-        # Basic code analysis using pattern matching
+        # Fallback: Basic code analysis using pattern matching
         issues = self._detect_issues(code, language, analysis_type)
         metrics = self._calculate_metrics(code, language)
         summary = self._generate_summary(issues, metrics)

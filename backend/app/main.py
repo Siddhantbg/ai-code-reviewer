@@ -2,11 +2,19 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import os
+import logging
 from typing import Dict, Any
 
 from app.routers import analysis
 from app.models.requests import CodeAnalysisRequest
 from app.models.responses import HealthResponse, CodeAnalysisResponse
+from app.services.ai_service import ai_analyzer
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -41,13 +49,31 @@ app.add_middleware(
 app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
 
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on application startup."""
+    # Ensure AI model is loaded
+    if not ai_analyzer.model_loaded:
+        logging.info("Loading AI model on startup...")
+        ai_analyzer.load_model()
+        if ai_analyzer.model_loaded:
+            logging.info("AI model loaded successfully")
+        else:
+            logging.warning("Failed to load AI model on startup")
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Health check endpoint to verify the API is running."""
+    # Include AI model status in health check
+    ai_status = "loaded" if ai_analyzer.model_loaded else "not loaded"
+    
     return HealthResponse(
         status="healthy",
-        message="AI Code Review Assistant is running",
-        version="1.0.0"
+        message=f"AI Code Review Assistant is running",
+        version="1.0.0",
+        ai_model_loaded=ai_analyzer.model_loaded,
+        ai_model_path="./models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
     )
 
 

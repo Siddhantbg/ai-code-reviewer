@@ -38,7 +38,5 @@ structlog==23.2.0
 # Development utilities
 watchdog==3.0.0  # For file watching during development
 
-# Future AI integration (placeholder for DeepSeek or other models)
-# transformers==4.35.2
-# torch==2.1.1
-# tokenizers==0.15.0
+# AI integration for DeepSeek Coder model
+llama-cpp-python==0.2.38
