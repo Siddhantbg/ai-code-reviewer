@@ -66,11 +66,12 @@ class AICodeAnalyzer:
             logger.warning("Model not loaded, attempting to reload")
             self.load_model()
             if not self.model_loaded:
-                return self._generate_fallback_response("Model could not be loaded")
+                return self._generate_fallback_response("Model could not be loaded", code)
         
         try:
             # Prepare the prompt for the model
             prompt = self._create_analysis_prompt(code, language.value, analysis_type.value)
+            
             
             # Generate response from the model
             response = self.model.create_completion(
@@ -86,11 +87,10 @@ class AICodeAnalyzer:
             logger.info(f"Generated response length: {len(generated_text)}")
             
             # Parse the JSON response
-            return self._parse_ai_response(generated_text, language, analysis_type)
-            
+            return self._parse_ai_response(generated_text, language, analysis_type, code)  # Add code parameter            
         except Exception as e:
             logger.error(f"Error during code analysis: {str(e)}")
-            return self._generate_fallback_response(f"Analysis failed: {str(e)}")
+            return self._generate_fallback_response(f"Analysis failed: {str(e)}", code)
     
     def _create_analysis_prompt(self, code: str, language: str, analysis_type: str) -> str:
         """Create a prompt for the DeepSeek Coder model."""
@@ -126,33 +126,45 @@ class AICodeAnalyzer:
         full_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant\n"
         return full_prompt
     
-    def _parse_ai_response(self, 
-                          response_text: str, 
-                          language: SupportedLanguage,
-                          analysis_type: AnalysisType) -> Dict[str, Any]:
+    def _parse_ai_response(self, response_text: str, language: SupportedLanguage, analysis_type: AnalysisType, code: str = "") -> Dict[str, Any]:
         """Parse the AI model's response into a structured format."""
         try:
-            # Try to extract JSON from the response
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}')
+            # Clean the response text first
+            cleaned_text = response_text.strip()
             
+            # Try to extract JSON from the response
+            json_start = cleaned_text.find('{')
+            json_end = cleaned_text.rfind('}')
+
             if json_start >= 0 and json_end >= 0:
-                json_str = response_text[json_start:json_end+1]
-                analysis_data = json.loads(json_str)
+                json_str = cleaned_text[json_start:json_end+1]
+                # Clean up any extra content after the JSON
+                json_lines = json_str.split('\n')
+                clean_json = []
+                brace_count = 0
+                for line in json_lines:
+                    clean_json.append(line)
+                    brace_count += line.count('{') - line.count('}')
+                    if brace_count == 0 and '}' in line:
+                        break
+                
+                final_json = '\n'.join(clean_json)
+                analysis_data = json.loads(final_json)
             else:
                 # If no JSON found, try to parse the text response
-                analysis_data = self._extract_structured_data(response_text)
-            
+                analysis_data = self._extract_structured_data(cleaned_text)
+
             # Convert to expected format
-            return self._convert_to_analyzer_format(analysis_data, language)
-            
+            return self._convert_to_analyzer_format(analysis_data, language, code)  # Use code here
+
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {str(e)}")
-            logger.debug(f"Response text: {response_text}")
-            return self._extract_structured_data(response_text)
+            logger.debug(f"Response text: {response_text[:500]}...")
+            structured_data = self._extract_structured_data(response_text)
+            return self._convert_to_analyzer_format(structured_data, language, code)  # Use code here
         except Exception as e:
             logger.error(f"Error parsing AI response: {str(e)}")
-            return self._generate_fallback_response("Failed to parse AI response")
+            return self._generate_fallback_response("Failed to parse AI response", code)  # Use code here
     
     def _extract_structured_data(self, text: str) -> Dict[str, Any]:
         """Extract structured data from text when JSON parsing fails."""
@@ -212,7 +224,8 @@ class AICodeAnalyzer:
     
     def _convert_to_analyzer_format(self, 
                                    ai_data: Dict[str, Any], 
-                                   language: SupportedLanguage) -> Dict[str, Any]:
+                                   language: SupportedLanguage,
+                                   code: str = "") -> Dict[str, Any]:
         """Convert AI response to the format expected by the analyzer service."""
         from app.models.responses import CodeIssue, CodeMetrics, AnalysisSummary
         import uuid
@@ -278,8 +291,8 @@ class AICodeAnalyzer:
         
         # Create metrics based on the score and issues
         # Count lines of code
-        lines_of_code = len([line.strip() for line in code.split('\n') if line.strip() and not line.strip().startswith('#')])
-
+        lines_of_code = len([line.strip() for line in code.split('\n') if line.strip() and not line.strip().startswith('#')]) if code else 1
+        
         metrics = CodeMetrics(
             complexity_score=min(10, max(1, score)),
             maintainability_index=min(100, max(0, score * 10)),
@@ -288,8 +301,8 @@ class AICodeAnalyzer:
             security_count=len([i for i in issues if i.type == IssueType.SECURITY]),
             performance_count=len([i for i in issues if i.type == IssueType.PERFORMANCE]),
             style_count=len([i for i in issues if i.type == IssueType.STYLE]),
-            lines_of_code=lines_of_code  # ADD THIS LINE
-)
+            lines_of_code=lines_of_code
+        )
         
         # Create summary
         summary = AnalysisSummary(
@@ -297,8 +310,14 @@ class AICodeAnalyzer:
             quality_level=self._get_quality_level(score),
             summary=summary_text,
             top_issues=[i.title for i in issues[:3]],
-            language=language.value
-        )
+            language=language.value,
+            total_issues=len(issues),
+            critical_issues=len([i for i in issues if i.severity == IssueSeverity.CRITICAL]),
+            high_issues=len([i for i in issues if i.severity == IssueSeverity.HIGH]),
+            medium_issues=len([i for i in issues if i.severity == IssueSeverity.MEDIUM]),
+            low_issues=len([i for i in issues if i.severity == IssueSeverity.LOW]),
+            recommendation=self._get_recommendation(score, len(issues))
+)
         
         # Generate suggestions based on issues
         suggestions = [i.description for i in issues]
@@ -322,8 +341,21 @@ class AICodeAnalyzer:
             return "Poor"
         else:
             return "Critical"
-    
-    def _generate_fallback_response(self, error_message: str) -> Dict[str, Any]:
+            
+    def _get_recommendation(self, score: int, issue_count: int) -> str:
+        """Generate recommendation based on score and issues."""
+        if score >= 9:
+            return "Excellent code quality with minimal issues"
+        elif score >= 7:
+            return "Good code quality with minor improvements needed"
+        elif score >= 5:
+            return "Average code quality, consider addressing identified issues"
+        elif score >= 3:
+            return "Below average code quality, several improvements needed"
+        else:
+            return "Poor code quality, significant improvements required"
+
+    def _generate_fallback_response(self, error_message: str, code: str = "") -> Dict[str, Any]:
         """Generate a fallback response when AI analysis fails."""
         from app.models.responses import CodeIssue, CodeMetrics, AnalysisSummary
         import uuid
@@ -345,15 +377,21 @@ class AICodeAnalyzer:
             security_count=0,
             performance_count=0,
             style_count=0,
-            lines_of_code=1 
+            lines_of_code=1  # Default value
         )
         
         summary = AnalysisSummary(
-            overall_score=5,  # Neutral score
+            overall_score=5,
             quality_level="Unknown",
             summary=f"Analysis limited: {error_message}",
             top_issues=["AI Analysis Limited"],
-            language="unknown"
+            language="unknown",
+            total_issues=1,
+            critical_issues=0,
+            high_issues=0,
+            medium_issues=0,
+            low_issues=1,
+            recommendation="Please try again for detailed analysis"
         )
         
         return {
