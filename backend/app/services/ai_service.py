@@ -13,7 +13,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Model configuration
-MODEL_PATH = "./models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+# FIXED: Use absolute path resolution
+def get_model_path():
+    """Get the absolute path to the model file"""
+    current_dir = Path(__file__).parent
+    backend_dir = current_dir.parent.parent
+    model_path = backend_dir / "models" / "deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+    logger.info(f"Resolved model path: {model_path}")
+    return str(model_path)
+
+MODEL_PATH = get_model_path()
 CONTEXT_SIZE = 4096
 MAX_TOKENS = 512
 TEMPERATURE = 0.1
@@ -268,15 +277,19 @@ class AICodeAnalyzer:
                 ))
         
         # Create metrics based on the score and issues
+        # Count lines of code
+        lines_of_code = len([line.strip() for line in code.split('\n') if line.strip() and not line.strip().startswith('#')])
+
         metrics = CodeMetrics(
-            complexity_score=min(10, max(1, score)),  # Ensure between 1-10
-            maintainability_index=min(100, max(0, score * 10)),  # Scale to 0-100
+            complexity_score=min(10, max(1, score)),
+            maintainability_index=min(100, max(0, score * 10)),
             issue_count=len(issues),
             bug_count=len([i for i in issues if i.type == IssueType.BUG]),
             security_count=len([i for i in issues if i.type == IssueType.SECURITY]),
             performance_count=len([i for i in issues if i.type == IssueType.PERFORMANCE]),
-            style_count=len([i for i in issues if i.type == IssueType.STYLE])
-        )
+            style_count=len([i for i in issues if i.type == IssueType.STYLE]),
+            lines_of_code=lines_of_code  # ADD THIS LINE
+)
         
         # Create summary
         summary = AnalysisSummary(
@@ -331,7 +344,8 @@ class AICodeAnalyzer:
             bug_count=0,
             security_count=0,
             performance_count=0,
-            style_count=0
+            style_count=0,
+            lines_of_code=1 
         )
         
         summary = AnalysisSummary(
