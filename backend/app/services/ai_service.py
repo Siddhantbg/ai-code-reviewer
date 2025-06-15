@@ -113,14 +113,16 @@ class AICodeAnalyzer:
         user_prompt = (
             f"Review this {language} code: ```\n{code}\n```\n\n"
             f"{focus_instruction}\n"
-            "Provide: \n"
-            "- Bugs found (if any)\n"
-            "- Security issues (if any)\n"
-            "- Performance improvements\n"
-            "- Code quality suggestions\n"
-            "- Overall score (1-10)\n"
-            "Format as JSON with these keys: bugs, security, performance, quality, score, summary."
-        )
+            "Analyze and provide:\n"
+            "- bugs: List any bugs or logical errors (mark severity as 'critical', 'high', 'medium', or 'low')\n"
+            "- security: List security vulnerabilities or risks\n"
+            "- performance: List performance improvement suggestions\n"
+            "- quality: List code style and maintainability issues\n"
+            "- score: Overall code quality score from 1-10\n"
+            "- summary: Detailed summary with specific actionable recommendations\n\n"
+            "Format as JSON with these exact keys: bugs, security, performance, quality, score, summary.\n"
+            "For bugs and security issues, include severity indicators in descriptions."
+)
         
         # Format for DeepSeek Coder
         full_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant\n"
@@ -130,6 +132,7 @@ class AICodeAnalyzer:
         """Parse the AI model's response into a structured format."""
         try:
             # Clean the response text first
+            logger.info(f"Raw AI response: {response_text}")
             cleaned_text = response_text.strip()
             
             # Try to extract JSON from the response
@@ -138,6 +141,9 @@ class AICodeAnalyzer:
 
             if json_start >= 0 and json_end >= 0:
                 json_str = cleaned_text[json_start:json_end+1]
+                
+                logger.info(f"Extracted JSON: {json_str}")
+
                 # Clean up any extra content after the JSON
                 json_lines = json_str.split('\n')
                 clean_json = []
@@ -150,10 +156,12 @@ class AICodeAnalyzer:
                 
                 final_json = '\n'.join(clean_json)
                 analysis_data = json.loads(final_json)
+                logger.info(f"Parsed AI data: {analysis_data}")
+
             else:
                 # If no JSON found, try to parse the text response
                 analysis_data = self._extract_structured_data(cleaned_text)
-
+                logger.info(f"Extracted structured data: {analysis_data}")
             # Convert to expected format
             return self._convert_to_analyzer_format(analysis_data, language, code)  # Use code here
 
@@ -241,30 +249,44 @@ class AICodeAnalyzer:
         # Convert to CodeIssue objects
         issues = []
         
-        # Process bugs
+        
+        # Process bugs with intelligent severity detection
         for i, bug in enumerate(bugs):
             if isinstance(bug, str):
+        # Determine severity based on keywords
+                severity = IssueSeverity.MEDIUM  # Default
+                bug_lower = bug.lower()
+        
+                if any(word in bug_lower for word in ['critical', 'crash', 'fatal', 'security', 'vulnerability']):
+                    severity = IssueSeverity.CRITICAL
+                elif any(word in bug_lower for word in ['error', 'exception', 'fail', 'break']):
+                    severity = IssueSeverity.HIGH
+                elif any(word in bug_lower for word in ['warning', 'potential', 'risk']):
+                    severity = IssueSeverity.MEDIUM
+                else:
+                    severity = IssueSeverity.LOW
+            
                 issues.append(CodeIssue(
                     id=f"bug_{uuid.uuid4().hex[:8]}",
                     type=IssueType.BUG,
-                    severity=IssueSeverity.MEDIUM,  # Default severity
+                    severity=severity,
                     title=f"Bug #{i+1}",
                     description=bug,
                     suggestion="Fix this bug to prevent unexpected behavior."
                 ))
-        
-        # Process security issues
+
+# Process security issues (always high/critical severity)
         for i, issue in enumerate(security_issues):
             if isinstance(issue, str):
+                severity = IssueSeverity.CRITICAL if any(word in issue.lower() for word in ['injection', 'xss', 'auth']) else IssueSeverity.HIGH
                 issues.append(CodeIssue(
                     id=f"security_{uuid.uuid4().hex[:8]}",
                     type=IssueType.SECURITY,
-                    severity=IssueSeverity.HIGH,  # Security issues are high severity by default
+                    severity=severity,
                     title=f"Security Issue #{i+1}",
                     description=issue,
-                    suggestion="Address this security vulnerability."
-                ))
-        
+                    suggestion="Address this security vulnerability immediately."
+        ))
         # Process performance issues
         for i, issue in enumerate(performance_issues):
             if isinstance(issue, str):
@@ -305,6 +327,7 @@ class AICodeAnalyzer:
         )
         
         # Create summary
+        # Create summary with AI intelligence
         summary = AnalysisSummary(
             overall_score=score,
             quality_level=self._get_quality_level(score),
@@ -316,8 +339,9 @@ class AICodeAnalyzer:
             high_issues=len([i for i in issues if i.severity == IssueSeverity.HIGH]),
             medium_issues=len([i for i in issues if i.severity == IssueSeverity.MEDIUM]),
             low_issues=len([i for i in issues if i.severity == IssueSeverity.LOW]),
-            recommendation=self._get_recommendation(score, len(issues))
+            recommendation=self._get_recommendation(score, len(issues), ai_data)  # Pass AI data here
 )
+          
         
         # Generate suggestions based on issues
         suggestions = [i.description for i in issues]
@@ -342,18 +366,32 @@ class AICodeAnalyzer:
         else:
             return "Critical"
             
-    def _get_recommendation(self, score: int, issue_count: int) -> str:
-        """Generate recommendation based on score and issues."""
-        if score >= 9:
-            return "Excellent code quality with minimal issues"
-        elif score >= 7:
-            return "Good code quality with minor improvements needed"
-        elif score >= 5:
-            return "Average code quality, consider addressing identified issues"
-        elif score >= 3:
-            return "Below average code quality, several improvements needed"
+    def _get_recommendation(self, score: int, issue_count: int, ai_data: Dict[str, Any] = None) -> str:
+        """Generate intelligent recommendation using AI analysis."""
+        
+        # Use AI summary if available
+        if ai_data and 'summary' in ai_data and ai_data['summary']:
+            ai_summary = ai_data['summary']
+            
+            # Enhance the AI summary with actionable advice
+            if score >= 8:
+                return f"{ai_summary} Continue following best practices and consider code reviews for quality assurance."
+            elif score >= 6:
+                return f"{ai_summary} Focus on addressing the identified issues to improve code reliability and maintainability."
+            elif score >= 4:
+                return f"{ai_summary} Prioritize fixing critical and high-severity issues before proceeding with new features."
+            else:
+                return f"{ai_summary} Consider significant refactoring and implementing comprehensive testing before production use."
+        
+        # Fallback to intelligent generic recommendations
+        if issue_count == 0:
+            return "Excellent! No major issues detected. Consider adding comprehensive tests and documentation."
+        elif issue_count <= 2:
+            return "Good code quality. Address the minor issues identified for optimal performance."
+        elif issue_count <= 5:
+            return "Moderate issues detected. Focus on fixing bugs and security vulnerabilities first."
         else:
-            return "Poor code quality, significant improvements required"
+            return "Multiple issues require attention. Prioritize critical and high-severity problems immediately."
 
     def _generate_fallback_response(self, error_message: str, code: str = "") -> Dict[str, Any]:
         """Generate a fallback response when AI analysis fails."""
