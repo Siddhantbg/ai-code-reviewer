@@ -1,0 +1,27 @@
+[MASTER]
+init-hook='import sys; sys.path.append(".")'
+extension-pkg-whitelist=pydantic
+
+[MESSAGES CONTROL]
+disable=missing-module-docstring,
+        missing-class-docstring,
+        missing-function-docstring,
+        too-few-public-methods,
+        import-error,
+        no-name-in-module
+
+[FORMAT]
+max-line-length=88
+indent-string='    '
+
+[DESIGN]
+max-args=7
+max-locals=15
+max-returns=6
+max-branches=12
+max-statements=50
+
+[SIMILARITIES]
+min-similarity-lines=4
+ignore-comments=yes
+ignore-docstrings=yes
