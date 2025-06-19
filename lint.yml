@@ -1,0 +1,57 @@
+name: Code Quality Check
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  frontend-lint:
+    runs-on: ubuntu-latest
+    name: Frontend ESLint Check
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install Frontend Dependencies
+      run: |
+        cd frontend
+        npm install
+        
+    - name: Run ESLint
+      run: |
+        cd frontend
+        npm run lint
+
+  backend-lint:
+    runs-on: ubuntu-latest
+    name: Backend Pylint Check
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install Backend Dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+        
+    - name: Run Pylint
+      run: |
+        cd backend
+        pylint app/
+        
+    - name: Run Black Format Check
+      run: |
+        cd backend
+        black --check app/ || echo "Black formatting issues found - run 'black app/' to fix"
