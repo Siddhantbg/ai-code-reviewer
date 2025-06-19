@@ -1,0 +1,31 @@
+{
+  "pylint": {
+    "disabled": [],
+    "enabled": [
+      "all"
+    ],
+    "options": {
+      "format": {
+        "max-line-length": 80
+      },
+      "design": {
+        "max-args": 4,
+        "max-attributes": 7,
+        "max-bool-expr": 3,
+        "max-branches": 8,
+        "max-locals": 10,
+        "max-parents": 3,
+        "max-public-methods": 15,
+        "max-returns": 5,
+        "max-statements": 30,
+        "min-public-methods": 1
+      }
+    }
+  },
+  "bandit": {
+    "severity": "low",
+    "confidence": "low",
+    "tests": [],
+    "skips": []
+  }
+}

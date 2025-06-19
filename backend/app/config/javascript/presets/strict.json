@@ -1,0 +1,36 @@
+{
+  "extends": [
+    "eslint:recommended",
+    "eslint:all"
+  ],
+  "rules": {
+    "no-unused-vars": "error",
+    "no-console": "error",
+    "no-debugger": "error",
+    "no-alert": "error",
+    "no-duplicate-imports": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "eqeqeq": "error",
+    "curly": "error",
+    "no-eval": "error",
+    "max-len": [
+      "error",
+      {
+        "code": 80
+      }
+    ],
+    "complexity": [
+      "error",
+      5
+    ],
+    "max-depth": [
+      "error",
+      3
+    ],
+    "max-params": [
+      "error",
+      4
+    ]
+  }
+}

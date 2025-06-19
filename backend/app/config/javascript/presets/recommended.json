@@ -1,0 +1,17 @@
+{
+  "extends": [
+    "eslint:recommended"
+  ],
+  "rules": {
+    "no-unused-vars": "error",
+    "no-console": "warn",
+    "no-debugger": "warn",
+    "no-alert": "warn",
+    "no-duplicate-imports": "error",
+    "no-var": "warn",
+    "prefer-const": "warn",
+    "eqeqeq": "warn",
+    "curly": "warn",
+    "no-eval": "error"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "pylint": {
+    "disabled": [
+      "missing-docstring",
+      "invalid-name",
+      "too-few-public-methods"
+    ],
+    "enabled": [
+      "unused-import",
+      "unused-variable",
+      "undefined-variable"
+    ],
+    "options": {
+      "format": {
+        "max-line-length": 100
+      },
+      "basic": {
+        "good-names": "i,j,k,ex,Run,_"
+      }
+    }
+  },
+  "bandit": {
+    "severity": "medium",
+    "confidence": "medium",
+    "tests": [],
+    "skips": []
+  }
+}

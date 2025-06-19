@@ -1,13 +1,51 @@
 "use client"
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import CodeEditor from '@/components/CodeEditor'
 import AnalysisResults from '@/components/AnalysisResults'
+import EnhancedResults from '@/components/EnhancedResults'
+import AnalysisConfig from '@/components/AnalysisConfig'
+import AnalysisProgress from '@/components/AnalysisProgress'
 import { apiClient, CodeAnalysisResponse } from '@/lib/api'
-import { Loader2, Play, AlertCircle, CheckCircle, Github, Code2 } from 'lucide-react'
+interface Rule {
+  id: string
+  name: string
+  description: string
+  category: string
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  enabled: boolean
+  tool: string
+}
+
+interface AnalysisConfigType {
+  language: string
+  rules: Rule[]
+  selectedTools: string[]
+  severityLevels: {
+    critical: boolean
+    high: boolean
+    medium: boolean
+    low: boolean
+  }
+  preset: string | null
+}
+import { useSocket } from '@/lib/websocket'
+import { Loader2, Play, AlertCircle, CheckCircle, Github, Code2, Settings, X, History, ChevronRight, Keyboard } from 'lucide-react'
 import { getLanguageFromFilename } from '@/lib/utils'
+import { toast } from 'react-hot-toast'
+
+type AnalysisMethod = 'quick' | 'comprehensive' | 'custom'
+
+interface AnalysisHistoryItem {
+  id: string
+  timestamp: string
+  language: string
+  filename?: string
+  score: number
+  issueCount: number
+}
 
 export default function HomePage() {
   const [code, setCode] = useState('')
@@ -17,9 +55,25 @@ export default function HomePage() {
   const [analysis, setAnalysis] = useState<CodeAnalysisResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState<boolean | null>(null)
+  const [configOpen, setConfigOpen] = useState(false)
+  const [analysisMethod, setAnalysisMethod] = useState<AnalysisMethod>('comprehensive')
+  const [analysisConfig, setAnalysisConfig] = useState<AnalysisConfigType | null>(null)
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null)
+  const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistoryItem[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [useEnhancedResults, setUseEnhancedResults] = useState(true)
+  
+  // WebSocket connection
+  const { socket, connected: wsConnected } = useSocket()
+  
+  // Keyboard shortcuts reference
+  const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false)
+  
+  // Refs for keyboard shortcuts
+  const editorRef = useRef<HTMLDivElement>(null)
 
   // Check backend connection on component mount
-  React.useEffect(() => {
+  useEffect(() => {
     const checkConnection = async () => {
       try {
         await apiClient.healthCheck()
@@ -31,7 +85,41 @@ export default function HomePage() {
     }
     
     checkConnection()
+    
+    // Setup interval to periodically check connection
+    const interval = setInterval(checkConnection, 30000) // Check every 30 seconds
+    
+    return () => clearInterval(interval)
   }, [])
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + Enter to analyze
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault()
+        if (!isAnalyzing && code.trim() && isConnected) {
+          handleAnalyze()
+        }
+      }
+      
+      // Ctrl/Cmd + / to toggle config panel
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault()
+        setConfigOpen(prev => !prev)
+      }
+      
+      // Escape to close panels
+      if (e.key === 'Escape') {
+        if (configOpen) setConfigOpen(false)
+        if (historyOpen) setHistoryOpen(false)
+        if (keyboardShortcutsOpen) setKeyboardShortcutsOpen(false)
+      }
+    }
+    
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isAnalyzing, code, isConnected, configOpen, historyOpen, keyboardShortcutsOpen])
 
   const handleAnalyze = useCallback(async () => {
     if (!code.trim()) {
@@ -42,48 +130,169 @@ export default function HomePage() {
     setIsAnalyzing(true)
     setError(null)
     setAnalysis(null)
+    
+    // Generate a unique analysis ID
+    const analysisId = `analysis-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+    setCurrentAnalysisId(analysisId)
 
     try {
-      const response = await apiClient.analyzeCode({
-        code,
-        language,
-        filename: filename || undefined,
-        analysis_type: 'comprehensive',
-        include_suggestions: true,
-        include_explanations: true,
-        severity_threshold: 'low'
-      })
+      // Determine severity threshold based on analysis method
+      let severityThreshold = 'low'
+      let analysisType = 'comprehensive'
+      
+      if (analysisMethod === 'quick') {
+        severityThreshold = 'medium'
+        analysisType = 'quick'
+      } else if (analysisMethod === 'comprehensive') {
+        severityThreshold = 'low'
+        analysisType = 'comprehensive'
+      } else if (analysisMethod === 'custom') {
+        // Use custom configuration - derive severity threshold from severityLevels
+        if (analysisConfig?.severityLevels) {
+          if (analysisConfig.severityLevels.critical) {
+            severityThreshold = 'critical'
+          } else if (analysisConfig.severityLevels.high) {
+            severityThreshold = 'high'
+          } else if (analysisConfig.severityLevels.medium) {
+            severityThreshold = 'medium'
+          } else {
+            severityThreshold = 'low'
+          }
+        } else {
+          severityThreshold = 'low'
+        }
+        analysisType = 'custom'
+      }
+      
+      // If using WebSockets, emit analysis request
+      if (socket && wsConnected) {
+        socket.emit('start_analysis', {
+          analysisId,
+          code,
+          language,
+          filename: filename || undefined,
+          analysis_type: analysisType,
+          include_suggestions: true,
+          include_explanations: true,
+          severity_threshold: severityThreshold,
+          config: analysisConfig
+        })
+        
+        // Listen for completion
+        const handleComplete = (data: any) => {
+          if (data.analysisId === analysisId) {
+            setAnalysis(data.result)
+            setIsAnalyzing(false)
+            setCurrentAnalysisId(null)
+            
+            // Add to history
+            const historyItem: AnalysisHistoryItem = {
+              id: data.result.analysis_id,
+              timestamp: new Date().toISOString(),
+              language,
+              filename: filename || undefined,
+              score: data.result.summary.overall_score,
+              issueCount: data.result.summary.total_issues
+            }
+            
+            setAnalysisHistory(prev => [historyItem, ...prev.slice(0, 9)])
+            
+            // Clean up listener
+            socket.off('analysis_complete', handleComplete)
+          }
+        }
+        
+        socket.on('analysis_complete', handleComplete)
+      } else {
+        // Fallback to REST API
+        const response = await apiClient.analyzeCode({
+          code,
+          language,
+          filename: filename || undefined,
+          analysis_type: analysisType,
+          include_suggestions: true,
+          include_explanations: true,
+          severity_threshold: severityThreshold,
+          config: analysisConfig
+        })
 
-      setAnalysis(response)
+        setAnalysis(response)
+        
+        // Add to history
+        const historyItem: AnalysisHistoryItem = {
+          id: response.analysis_id,
+          timestamp: new Date().toISOString(),
+          language,
+          filename: filename || undefined,
+          score: response.summary.overall_score,
+          issueCount: response.summary.total_issues
+        }
+        
+        setAnalysisHistory(prev => [historyItem, ...prev.slice(0, 9)])
+        setIsAnalyzing(false)
+        setCurrentAnalysisId(null)
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to analyze code. Please try again.')
       console.error('Analysis failed:', err)
-    } finally {
       setIsAnalyzing(false)
+      setCurrentAnalysisId(null)
+      
+      toast.error('Analysis failed: ' + (err.message || 'Unknown error'))
     }
-  }, [code, language, filename])
+  }, [code, language, filename, analysisMethod, analysisConfig, socket, wsConnected])
 
-  const handleExportReport = useCallback(() => {
+  const handleExportReport = useCallback((format: 'json' | 'pdf' | 'csv' = 'json') => {
     if (!analysis) return
 
-    const reportData = {
-      analysis,
-      exportedAt: new Date().toISOString(),
-      code: code.substring(0, 1000) + (code.length > 1000 ? '...' : '') // Truncate for privacy
-    }
+    if (format === 'json') {
+      const reportData = {
+        analysis,
+        exportedAt: new Date().toISOString(),
+        code: code.substring(0, 1000) + (code.length > 1000 ? '...' : '') // Truncate for privacy
+      }
 
-    const blob = new Blob([JSON.stringify(reportData, null, 2)], {
-      type: 'application/json'
-    })
-    
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `code-analysis-${analysis.analysis_id}.json`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+      const blob = new Blob([JSON.stringify(reportData, null, 2)], {
+        type: 'application/json'
+      })
+      
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `code-analysis-${analysis.analysis_id}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } else if (format === 'csv') {
+      // Generate CSV content
+      const headers = ['ID', 'Type', 'Severity', 'Line', 'Message', 'Suggestion']
+      const rows = analysis.issues.map(issue => [
+        issue.id,
+        issue.type,
+        issue.severity,
+        issue.line_number || '',
+        issue.description,
+        issue.suggestion || ''
+      ])
+      
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      ].join('\n')
+      
+      const blob = new Blob([csvContent], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `code-analysis-${analysis.analysis_id}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } else {
+      toast.error('PDF export is not implemented yet')
+    }
   }, [analysis, code])
 
   const handleCodeChange = useCallback((newCode: string) => {
@@ -110,6 +319,28 @@ export default function HomePage() {
       setLanguage(detectedLanguage)
     }
   }, [language])
+  
+  const handleConfigChange = useCallback((config: AnalysisConfigType) => {
+    setAnalysisConfig(config)
+    // Automatically switch to custom analysis method when config changes
+    setAnalysisMethod('custom')
+  }, [])
+  
+  const handleCancelAnalysis = useCallback(() => {
+    if (socket && wsConnected && currentAnalysisId) {
+      socket.emit('cancel_analysis', { analysisId: currentAnalysisId })
+    }
+    
+    setIsAnalyzing(false)
+    setCurrentAnalysisId(null)
+    toast.success('Analysis cancelled')
+  }, [socket, wsConnected, currentAnalysisId])
+  
+  const loadAnalysisFromHistory = useCallback((historyItem: AnalysisHistoryItem) => {
+    // In a real app, this would fetch the analysis from the server
+    toast.success(`Loading analysis ${historyItem.id}`)
+    setHistoryOpen(false)
+  }, [])
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -126,7 +357,7 @@ export default function HomePage() {
                   AI Code Reviewer
                 </h1>
                 <p className="text-sm text-gray-500">
-                  Powered by AI • Sprint 1
+                  Powered by AI • Sprint 2
                 </p>
               </div>
             </div>
@@ -149,6 +380,36 @@ export default function HomePage() {
                 )}
               </div>
               
+              {/* WebSocket Status */}
+              {isConnected && (
+                <div className="flex items-center gap-2">
+                  {wsConnected ? (
+                    <>
+                      <span className="flex h-2 w-2 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                      </span>
+                      <span className="text-xs text-green-600">Live</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex h-2 w-2 relative">
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-gray-400"></span>
+                      </span>
+                      <span className="text-xs text-gray-600">Standard</span>
+                    </>
+                  )}
+                </div>
+              )}
+              
+              {/* Keyboard Shortcuts Button */}
+              <button 
+                onClick={() => setKeyboardShortcutsOpen(prev => !prev)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <Keyboard className="h-5 w-5" />
+              </button>
+              
               <a
                 href="https://github.com"
                 target="_blank"
@@ -166,7 +427,171 @@ export default function HomePage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column - Code Editor */}
-          <div className="space-y-6">
+          <div className="space-y-6" ref={editorRef}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfigOpen(prev => !prev)}
+                  className="flex items-center gap-2"
+                >
+                  <Settings className="h-4 w-4" />
+                  {configOpen ? 'Hide Configuration' : 'Show Configuration'}
+                </Button>
+                
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setHistoryOpen(prev => !prev)}
+                  className="flex items-center gap-2"
+                >
+                  <History className="h-4 w-4" />
+                  History
+                </Button>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={analysisMethod === 'quick' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setAnalysisMethod('quick')}
+                >
+                  Quick
+                </Button>
+                <Button
+                  variant={analysisMethod === 'comprehensive' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setAnalysisMethod('comprehensive')}
+                >
+                  Comprehensive
+                </Button>
+                <Button
+                  variant={analysisMethod === 'custom' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setAnalysisMethod('custom')
+                    if (!configOpen) setConfigOpen(true)
+                  }}
+                >
+                  Custom
+                </Button>
+              </div>
+            </div>
+            
+            {/* Configuration Panel */}
+            {configOpen && (
+              <Card className="border-blue-100">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Analysis Configuration</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setConfigOpen(false)}
+                      className="h-8 w-8 p-0"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <AnalysisConfig
+                    language={language}
+                    onConfigChange={handleConfigChange}
+                    defaultConfig={analysisConfig}
+                  />
+                </CardContent>
+              </Card>
+            )}
+            
+            {/* History Panel */}
+            {historyOpen && (
+              <Card className="border-blue-100">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Analysis History</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setHistoryOpen(false)}
+                      className="h-8 w-8 p-0"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {analysisHistory.length > 0 ? (
+                    <div className="space-y-2">
+                      {analysisHistory.map((item) => (
+                        <div 
+                          key={item.id}
+                          className="flex items-center justify-between p-2 hover:bg-gray-50 rounded cursor-pointer"
+                          onClick={() => loadAnalysisFromHistory(item)}
+                        >
+                          <div>
+                            <div className="font-medium">{item.filename || 'Untitled'}</div>
+                            <div className="text-xs text-gray-500">
+                              {new Date(item.timestamp).toLocaleString()} • {item.language}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="text-sm">
+                              Score: <span className="font-medium">{item.score.toFixed(1)}</span>
+                            </div>
+                            <div className="text-sm">
+                              Issues: <span className="font-medium">{item.issueCount}</span>
+                            </div>
+                            <ChevronRight className="h-4 w-4 text-gray-400" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-4 text-gray-500">
+                      No analysis history yet
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+            
+            {/* Keyboard Shortcuts Panel */}
+            {keyboardShortcutsOpen && (
+              <Card className="border-blue-100">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Keyboard Shortcuts</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setKeyboardShortcutsOpen(false)}
+                      className="h-8 w-8 p-0"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                      <span>Analyze Code</span>
+                      <kbd className="px-2 py-1 bg-gray-200 rounded text-xs">Ctrl+Enter</kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                      <span>Toggle Configuration</span>
+                      <kbd className="px-2 py-1 bg-gray-200 rounded text-xs">Ctrl+/</kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                      <span>Close Panels</span>
+                      <kbd className="px-2 py-1 bg-gray-200 rounded text-xs">Esc</kbd>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            
             <CodeEditor
               code={code}
               language={language}
@@ -205,7 +630,7 @@ export default function HomePage() {
                   
                   {!isConnected && (
                     <div className="text-sm text-red-600 bg-red-50 p-3 rounded">
-                      ⚠️ Backend is not connected. Please make sure the FastAPI server is running on port 8000.
+                      ⚠️ Backend is not connected. Please make sure the FastAPI server is running on port 5000.
                     </div>
                   )}
                   
@@ -215,10 +640,24 @@ export default function HomePage() {
                     </div>
                   )}
                   
-                  <div className="text-xs text-gray-500">
-                    <p>• Supports Python, JavaScript, TypeScript, Java, C++</p>
-                    <p>• Detects bugs, security issues, and style problems</p>
-                    <p>• Provides suggestions and explanations</p>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-gray-500">
+                      <p>• Supports Python, JavaScript, TypeScript, Java, C++</p>
+                      <p>• Detects bugs, security issues, and style problems</p>
+                      <p>• Provides suggestions and explanations</p>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500">Enhanced Results</span>
+                      <button
+                        onClick={() => setUseEnhancedResults(prev => !prev)}
+                        className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${useEnhancedResults ? 'bg-blue-600' : 'bg-gray-200'}`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${useEnhancedResults ? 'translate-x-5' : 'translate-x-0'}`}
+                        />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -227,11 +666,28 @@ export default function HomePage() {
 
           {/* Right Column - Analysis Results */}
           <div className="space-y-6">
-            {analysis ? (
-              <AnalysisResults
-                analysis={analysis}
-                onExport={handleExportReport}
+            {isAnalyzing && currentAnalysisId ? (
+              <AnalysisProgress
+                analysisId={currentAnalysisId}
+                language={language}
+                codeSize={code.split('\n').length}
+                onCancel={handleCancelAnalysis}
+                onComplete={(analysisId) => {
+                  // This is handled by the WebSocket event listener
+                }}
               />
+            ) : analysis ? (
+              useEnhancedResults ? (
+                <EnhancedResults
+                  analysis={analysis}
+                  onExport={handleExportReport}
+                />
+              ) : (
+                <AnalysisResults
+                  analysis={analysis}
+                  onExport={handleExportReport}
+                />
+              )
             ) : (
               <Card className="h-96 flex items-center justify-center">
                 <CardContent>
@@ -254,7 +710,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center text-gray-500">
             <p className="text-sm">
-              AI Code Reviewer - Sprint 1 • Built with Next.js, FastAPI, and AI
+              AI Code Reviewer - Sprint 2 • Built with Next.js, FastAPI, and AI
             </p>
             <p className="text-xs mt-2">
               This is a development version. Analysis results are for demonstration purposes.
