@@ -1,56 +1,55 @@
 # FastAPI and ASGI server
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+fastapi==0.115.0
+uvicorn[standard]==0.32.1
 
 # Data validation and serialization
-pydantic==2.5.0
-pydantic-settings==2.1.0
+pydantic==2.3.0
+pydantic-settings>=2.1.0
+pydantic-core==2.6.0 
 
 # HTTP client and file handling
-python-multipart==0.0.6
-httpx==0.25.2
-
-# CORS middleware (included in FastAPI but explicit for clarity)
-# fastapi already includes starlette which has CORS
+python-multipart==0.0.12
+httpx>=0.25.2
 
 # Environment variables
-python-dotenv==1.0.0
+python-dotenv==1.0.1
 
 # Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-httpx==0.25.2  # For testing async endpoints
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
 
 # Code quality and formatting
-black==23.11.0
-flake8==6.1.0
-isort==5.12.0
+black>=24.0.0
+flake8==7.1.1
+isort==5.13.2
 
 # Type checking
-mypy==1.7.1
+mypy>=1.13.0
 
 # Security
-cryptography==41.0.8
+cryptography>=43.0.0
 
 # Logging
-structlog==23.2.0
+python-json-logger==2.0.7
 
 # Development utilities
-watchdog==3.0.0  # For file watching during development
+watchdog==6.0.0
 
 # AI integration for DeepSeek Coder model
-llama-cpp-python==0.2.38
+llama-cpp-python==0.3.2
 
 # Static analysis tools
-pylint>=3.0.0
+pylint==3.3.1
+pylint-pydantic==0.3.2
 bandit>=1.7.5
+pre-commit==4.0.1
 
 # Caching and background processing
-redis>=4.5.0
-celery>=5.3.0
+redis>=5.0.0
+celery>=5.4.0
 
 # WebSockets for progress tracking
-websockets>=11.0
+websockets>=13.0
 
 # Async file operations
-aiofiles>=23.1.0
+aiofiles>=24.1.0

@@ -92,35 +92,6 @@ export default function HomePage() {
     return () => clearInterval(interval)
   }, [])
 
-  // Handle keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl/Cmd + Enter to analyze
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault()
-        if (!isAnalyzing && code.trim() && isConnected) {
-          handleAnalyze()
-        }
-      }
-      
-      // Ctrl/Cmd + / to toggle config panel
-      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
-        e.preventDefault()
-        setConfigOpen(prev => !prev)
-      }
-      
-      // Escape to close panels
-      if (e.key === 'Escape') {
-        if (configOpen) setConfigOpen(false)
-        if (historyOpen) setHistoryOpen(false)
-        if (keyboardShortcutsOpen) setKeyboardShortcutsOpen(false)
-      }
-    }
-    
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isAnalyzing, code, isConnected, configOpen, historyOpen, keyboardShortcutsOpen])
-
   const handleAnalyze = useCallback(async () => {
     if (!code.trim()) {
       setError('Please enter some code to analyze')
@@ -179,7 +150,7 @@ export default function HomePage() {
         })
         
         // Listen for completion
-        const handleComplete = (data: any) => {
+        const handleComplete = (data: { analysisId: string; result: CodeAnalysisResponse }) => {
           if (data.analysisId === analysisId) {
             setAnalysis(data.result)
             setIsAnalyzing(false)
@@ -232,15 +203,45 @@ export default function HomePage() {
         setIsAnalyzing(false)
         setCurrentAnalysisId(null)
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to analyze code. Please try again.')
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to analyze code. Please try again.'
+      setError(errorMessage)
       console.error('Analysis failed:', err)
       setIsAnalyzing(false)
       setCurrentAnalysisId(null)
       
-      toast.error('Analysis failed: ' + (err.message || 'Unknown error'))
+      toast.error('Analysis failed: ' + errorMessage)
     }
   }, [code, language, filename, analysisMethod, analysisConfig, socket, wsConnected])
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + Enter to analyze
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault()
+        if (!isAnalyzing && code.trim() && isConnected) {
+          handleAnalyze()
+        }
+      }
+      
+      // Ctrl/Cmd + / to toggle config panel
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault()
+        setConfigOpen(prev => !prev)
+      }
+      
+      // Escape to close panels
+      if (e.key === 'Escape') {
+        if (configOpen) setConfigOpen(false)
+        if (historyOpen) setHistoryOpen(false)
+        if (keyboardShortcutsOpen) setKeyboardShortcutsOpen(false)
+      }
+    }
+    
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isAnalyzing, code, isConnected, configOpen, historyOpen, keyboardShortcutsOpen, handleAnalyze])
 
   const handleExportReport = useCallback((format: 'json' | 'pdf' | 'csv' = 'json') => {
     if (!analysis) return
@@ -672,7 +673,7 @@ export default function HomePage() {
                 language={language}
                 codeSize={code.split('\n').length}
                 onCancel={handleCancelAnalysis}
-                onComplete={(analysisId) => {
+                onComplete={() => {
                   // This is handled by the WebSocket event listener
                 }}
               />
@@ -695,7 +696,7 @@ export default function HomePage() {
                     <Code2 className="h-12 w-12 mx-auto mb-4 text-gray-300" />
                     <h3 className="text-lg font-medium mb-2">No Analysis Yet</h3>
                     <p className="text-sm">
-                      Enter your code in the editor and click "Analyze Code" to get started.
+                      Enter your code in the editor and click &quot;Analyze Code&quot; to get started.
                     </p>
                   </div>
                 </CardContent>
