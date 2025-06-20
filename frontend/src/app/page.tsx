@@ -1,5 +1,4 @@
 "use client"
-
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -48,6 +47,7 @@ interface AnalysisHistoryItem {
 }
 
 export default function HomePage() {
+  const containerRef = useRef<HTMLDivElement>(null);
   const [code, setCode] = useState('')
   const [language, setLanguage] = useState('python')
   const [filename, setFilename] = useState('')
@@ -74,6 +74,14 @@ export default function HomePage() {
 
   // Check backend connection on component mount
   useEffect(() => {
+<<<<<<< Updated upstream
+=======
+    // Initial setup - hide main content until loader completes
+    if (containerRef.current) {
+      gsap.set(containerRef.current, { opacity: 0 })
+    }
+    
+>>>>>>> Stashed changes
     const checkConnection = async () => {
       try {
         await apiClient.healthCheck()
@@ -91,6 +99,103 @@ export default function HomePage() {
     
     return () => clearInterval(interval)
   }, [])
+<<<<<<< Updated upstream
+=======
+  
+  const handleLoaderComplete = () => {
+    setShowLoader(false)
+    setShowMainContent(true)
+    
+    // Fade in main content with ref check
+    if (containerRef.current) {
+      gsap.fromTo(containerRef.current, 
+        { opacity: 0, y: 50 },
+        { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }
+      )
+    }
+
+    // Initialize main page animations after loader
+    setTimeout(() => {
+      initializeMainAnimations()
+    }, 100)
+  }
+
+  const initializeMainAnimations = () => {
+    // Hero entrance animation
+    const heroTitle = document.querySelector(".hero-title")
+    const heroSubtitle = document.querySelector(".hero-subtitle") 
+    const heroCta = document.querySelector(".hero-cta")
+    
+    if (heroTitle || heroSubtitle || heroCta) {
+      const heroTl = gsap.timeline()
+      
+      if (heroTitle) {
+        heroTl.from(heroTitle, {
+          duration: 1.2,
+          y: 100,
+          opacity: 0,
+          ease: "power3.out"
+        })
+      }
+      
+      if (heroSubtitle) {
+        heroTl.from(heroSubtitle, {
+          duration: 0.8,
+          y: 50,
+          opacity: 0,
+          ease: "power2.out"
+        }, "-=0.6")
+      }
+      
+      if (heroCta) {
+        heroTl.from(heroCta, {
+          duration: 0.6,
+          scale: 0,
+          opacity: 0,
+          ease: "back.out(1.7)"
+        }, "-=0.4")
+      }
+    }
+
+    // Floating animations for background elements
+    const floatingElements = document.querySelectorAll(".floating-element")
+    if (floatingElements.length > 0) {
+      gsap.to(floatingElements, {
+        y: -20,
+        duration: 3,
+        repeat: -1,
+        yoyo: true,
+        ease: "power1.inOut",
+        stagger: 0.5
+      })
+    }
+
+    // Scroll animations
+    const revealSections = document.querySelectorAll(".reveal-section")
+    revealSections.forEach((section) => {
+      gsap.from(section, {
+        y: 100,
+        opacity: 0,
+        duration: 1,
+        scrollTrigger: {
+          trigger: section,
+          start: "top 80%",
+          end: "bottom 20%",
+          toggleActions: "play none none reverse"
+        }
+      })
+    })
+  }
+  
+  const toggleTheme = () => {
+    setIsDarkMode(!isDarkMode)
+    // Theme transition animation
+    gsap.to("body", {
+      duration: 0.3,
+      ease: "power2.inOut"
+    })
+  }
+>>>>>>> Stashed changes
 
   const handleAnalyze = useCallback(async () => {
     if (!code.trim()) {
@@ -344,7 +449,18 @@ export default function HomePage() {
   }, [])
 
   return (
+<<<<<<< Updated upstream
     <div className="min-h-screen bg-gray-50">
+=======
+    <div ref={containerRef} className={`main-app min-h-screen ${isDarkMode ? 'dark' : ''}`}>
+      {/* Background Elements */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="floating-element absolute top-20 left-10 w-32 h-32 bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-full blur-xl"></div>
+        <div className="floating-element absolute top-40 right-20 w-24 h-24 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-full blur-lg"></div>
+        <div className="floating-element absolute bottom-20 left-1/4 w-40 h-40 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-full blur-2xl"></div>
+      </div>
+
+>>>>>>> Stashed changes
       {/* Header */}
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -630,8 +746,13 @@ export default function HomePage() {
                   </Button>
                   
                   {!isConnected && (
+<<<<<<< Updated upstream
                     <div className="text-sm text-red-600 bg-red-50 p-3 rounded">
                       ⚠️ Backend is not connected. Please make sure the FastAPI server is running on port 5000.
+=======
+                    <div className="text-sm text-red-600 bg-red-50 p-3 rounded mt-3">
+                      ⚠️ Backend is not connected. Please make sure the FastAPI server is running on port 8000.
+>>>>>>> Stashed changes
                     </div>
                   )}
                   
