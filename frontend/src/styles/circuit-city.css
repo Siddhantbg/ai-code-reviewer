@@ -1,0 +1,101 @@
+
+/* Circuit Board City specific styles and animations */
+/* Circuit Board City Animations */
+@keyframes dataFlow {
+  0% { transform: translateX(-100%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateX(100vw); opacity: 0; }
+}
+
+@keyframes particleFloat {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  25% { transform: translateY(-10px) rotate(90deg); }
+  50% { transform: translateY(-5px) rotate(180deg); }
+  75% { transform: translateY(-15px) rotate(270deg); }
+}
+
+@keyframes powerPulse {
+  0%, 100% { opacity: 0.3; box-shadow: 0 0 5px currentColor; }
+  50% { opacity: 1; box-shadow: 0 0 20px currentColor; }
+}
+
+@keyframes circuitGlow {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; box-shadow: 0 0 10px currentColor; }
+}
+
+.data-stream {
+    animation: dataFlow 4s linear infinite;
+  }
+
+  .data-particle {
+    animation: particleFloat 3s ease-in-out infinite;
+  }
+
+  .power-indicator {
+    animation: powerPulse 2s ease-in-out infinite;
+  }
+
+  .circuit-path {
+    animation: circuitGlow 3s ease-in-out infinite;
+  }
+
+  /* Building hover effects */
+  .city-building {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .city-building:hover {
+    filter: brightness(1.2) drop-shadow(0 0 20px rgba(59, 130, 246, 0.5));
+  }
+
+  /* Circuit board specific styles */
+  .circuit-board-bg {
+    background-image: 
+      radial-gradient(circle at 25% 25%, #10b981 2px, transparent 2px),
+      radial-gradient(circle at 75% 75%, #3b82f6 2px, transparent 2px),
+      linear-gradient(45deg, transparent 40%, rgba(16, 185, 129, 0.1) 40%, rgba(16, 185, 129, 0.1) 60%, transparent 60%);
+    background-size: 50px 50px, 50px 50px, 25px 25px;
+  }
+
+  /* Isometric 3D effect for buildings */
+  .isometric {
+    transform: rotateX(60deg) rotateY(-45deg) rotateZ(0deg);
+    transform-style: preserve-3d;
+  }
+
+/* Responsive Circuit City */
+@media (max-width: 768px) {
+  .city-district {
+    position: relative !important;
+    display: inline-block;
+    margin: 0.5rem;
+  }
+  
+  .circuit-path {
+    display: none;
+  }
+  
+  .city-building {
+    width: 3rem !important;
+    height: 4rem !important;
+  }
+}
+
+/* Accessibility improvements */
+@media (prefers-reduced-motion: reduce) {
+  .data-stream,
+  .data-particle,
+  .power-indicator,
+  .circuit-path,
+  .animate-float,
+  .animate-pulse-slow,
+  .animate-gradient {
+    animation: none !important;
+  }
+  
+  .city-building {
+    transition: none !important;
+  }
+}

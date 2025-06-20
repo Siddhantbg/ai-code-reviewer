@@ -3,12 +3,26 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import CodeEditor from '@/components/CodeEditor'
 import AnalysisResults from '@/components/AnalysisResults'
 import EnhancedResults from '@/components/EnhancedResults'
 import AnalysisConfig from '@/components/AnalysisConfig'
 import AnalysisProgress from '@/components/AnalysisProgress'
+import EpicLoader from '@/components/EpicLoader'
+import CircuitBoardCity from '@/components/CircuitBoardCity'
 import { apiClient, CodeAnalysisResponse } from '@/lib/api'
+import { useSocket } from '@/lib/websocket'
+import { useToast } from '@/hooks/use-toast'
+import { gsap } from 'gsap'
+import { ScrollTrigger } from 'gsap/ScrollTrigger'
+import { Loader2, Play, AlertCircle, CheckCircle, Github, Settings, X, History, ChevronRight, Keyboard, Code, Zap, BarChart3, FileText, Moon, Sun } from 'lucide-react'
+import { getLanguageFromFilename } from '@/lib/utils'
+import { toast } from 'react-hot-toast'
+
+// Register GSAP plugins
+gsap.registerPlugin(ScrollTrigger)
+
 interface Rule {
   id: string
   name: string
@@ -31,10 +45,6 @@ interface AnalysisConfigType {
   }
   preset: string | null
 }
-import { useSocket } from '@/lib/websocket'
-import { Loader2, Play, AlertCircle, CheckCircle, Github, Code2, Settings, X, History, ChevronRight, Keyboard } from 'lucide-react'
-import { getLanguageFromFilename } from '@/lib/utils'
-import { toast } from 'react-hot-toast'
 
 type AnalysisMethod = 'quick' | 'comprehensive' | 'custom'
 
@@ -62,18 +72,26 @@ export default function HomePage() {
   const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistoryItem[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [useEnhancedResults, setUseEnhancedResults] = useState(true)
+  const [isDarkMode, setIsDarkMode] = useState(false)
+  const [showLoader, setShowLoader] = useState(true)
+  const [showMainContent, setShowMainContent] = useState(false)
+  const { toast: toastHook } = useToast()
+  
+  // Refs for animations
+  const heroRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<HTMLDivElement>(null)
   
   // WebSocket connection
   const { socket, connected: wsConnected } = useSocket()
   
   // Keyboard shortcuts reference
   const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false)
-  
-  // Refs for keyboard shortcuts
-  const editorRef = useRef<HTMLDivElement>(null)
 
-  // Check backend connection on component mount
+  // Initialize animations and check connection
   useEffect(() => {
+    // Initial setup - hide main content until loader completes
+    gsap.set(".main-app", { opacity: 0 })
+    
     const checkConnection = async () => {
       try {
         await apiClient.healthCheck()
@@ -87,10 +105,83 @@ export default function HomePage() {
     checkConnection()
     
     // Setup interval to periodically check connection
-    const interval = setInterval(checkConnection, 30000) // Check every 30 seconds
+    const interval = setInterval(checkConnection, 30000)
     
     return () => clearInterval(interval)
   }, [])
+  
+  const handleLoaderComplete = () => {
+    setShowLoader(false)
+    setShowMainContent(true)
+    
+    // Fade in main content
+    gsap.fromTo(".main-app", 
+      { opacity: 0, y: 50 },
+      { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }
+    )
+
+    // Initialize main page animations after loader
+    setTimeout(() => {
+      initializeMainAnimations()
+    }, 100)
+  }
+
+  const initializeMainAnimations = () => {
+    // Hero entrance animation
+    const heroTl = gsap.timeline()
+    heroTl.from(".hero-title", {
+      duration: 1.2,
+      y: 100,
+      opacity: 0,
+      ease: "power3.out"
+    })
+    .from(".hero-subtitle", {
+      duration: 0.8,
+      y: 50,
+      opacity: 0,
+      ease: "power2.out"
+    }, "-=0.6")
+    .from(".hero-cta", {
+      duration: 0.6,
+      scale: 0,
+      opacity: 0,
+      ease: "back.out(1.7)"
+    }, "-=0.4")
+
+    // Floating animations for background elements
+    gsap.to(".floating-element", {
+      y: -20,
+      duration: 3,
+      repeat: -1,
+      yoyo: true,
+      ease: "power1.inOut",
+      stagger: 0.5
+    })
+
+    // Scroll animations
+    gsap.utils.toArray(".reveal-section").forEach((section: any) => {
+      gsap.from(section, {
+        y: 100,
+        opacity: 0,
+        duration: 1,
+        scrollTrigger: {
+          trigger: section,
+          start: "top 80%",
+          end: "bottom 20%",
+          toggleActions: "play none none reverse"
+        }
+      })
+    })
+  }
+  
+  const toggleTheme = () => {
+    setIsDarkMode(!isDarkMode)
+    // Theme transition animation
+    gsap.to("body", {
+      duration: 0.3,
+      ease: "power2.inOut"
+    })
+  }
 
   const handleAnalyze = useCallback(async () => {
     if (!code.trim()) {
@@ -145,8 +236,8 @@ export default function HomePage() {
           analysis_type: analysisType,
           include_suggestions: true,
           include_explanations: true,
-          severity_threshold: severityThreshold,
-          config: analysisConfig
+          severity_threshold: severityThreshold
+          // config: analysisConfig
         })
         
         // Listen for completion
@@ -183,8 +274,8 @@ export default function HomePage() {
           analysis_type: analysisType,
           include_suggestions: true,
           include_explanations: true,
-          severity_threshold: severityThreshold,
-          config: analysisConfig
+          severity_threshold: severityThreshold
+          // config: analysisConfig
         })
 
         setAnalysis(response)
@@ -343,309 +434,289 @@ export default function HomePage() {
     setHistoryOpen(false)
   }, [])
 
+  if (showLoader) {
+    return <EpicLoader onComplete={handleLoaderComplete} />
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className={`main-app min-h-screen ${isDarkMode ? 'dark' : ''}`}>
+      {/* Background Elements */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="floating-element absolute top-20 left-10 w-32 h-32 bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-full blur-xl"></div>
+        <div className="floating-element absolute top-40 right-20 w-24 h-24 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-full blur-lg"></div>
+        <div className="floating-element absolute bottom-20 left-1/4 w-40 h-40 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-full blur-2xl"></div>
+      </div>
+
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-600 rounded-lg">
-                <Code2 className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">
-                  AI Code Reviewer
-                </h1>
-                <p className="text-sm text-gray-500">
-                  Powered by AI • Sprint 2
-                </p>
-              </div>
+      <header className="fixed top-0 w-full z-50 backdrop-blur-lg bg-white/80 dark:bg-gray-900/80 border-b border-gray-200/20 dark:border-gray-700/20">
+        <div className="container mx-auto px-6 py-4 flex justify-between items-center">
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
+              <Code className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              AI Code Reviewer
+            </span>
+          </div>
+          
+          <nav className="hidden md:flex items-center space-x-8">
+            <a href="#circuit-city" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 transition-colors">Features</a>
+            <a href="#editor" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 transition-colors">Analyzer</a>
+            
+            {/* Connection Status */}
+            <div className="flex items-center gap-2">
+              {isConnected === null ? (
+                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+              ) : isConnected ? (
+                <>
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                  <span className="text-sm text-green-600">Connected</span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="h-4 w-4 text-red-500" />
+                  <span className="text-sm text-red-600">Disconnected</span>
+                </>
+              )}
             </div>
             
-            <div className="flex items-center gap-4">
-              {/* Connection Status */}
+            {/* WebSocket Status */}
+            {isConnected && (
               <div className="flex items-center gap-2">
-                {isConnected === null ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                ) : isConnected ? (
+                {wsConnected ? (
                   <>
-                    <CheckCircle className="h-4 w-4 text-green-500" />
-                    <span className="text-sm text-green-600">Connected</span>
+                    <span className="flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                    </span>
+                    <span className="text-xs text-green-600">Live</span>
                   </>
                 ) : (
                   <>
-                    <AlertCircle className="h-4 w-4 text-red-500" />
-                    <span className="text-sm text-red-600">Disconnected</span>
+                    <span className="flex h-2 w-2 relative">
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-gray-400"></span>
+                    </span>
+                    <span className="text-xs text-gray-600">Standard</span>
                   </>
                 )}
               </div>
-              
-              {/* WebSocket Status */}
-              {isConnected && (
-                <div className="flex items-center gap-2">
-                  {wsConnected ? (
-                    <>
-                      <span className="flex h-2 w-2 relative">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                      </span>
-                      <span className="text-xs text-green-600">Live</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="flex h-2 w-2 relative">
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-gray-400"></span>
-                      </span>
-                      <span className="text-xs text-gray-600">Standard</span>
-                    </>
-                  )}
-                </div>
-              )}
-              
-              {/* Keyboard Shortcuts Button */}
-              <button 
-                onClick={() => setKeyboardShortcutsOpen(prev => !prev)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <Keyboard className="h-5 w-5" />
-              </button>
-              
-              <a
-                href="https://github.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <Github className="h-5 w-5" />
-              </a>
-            </div>
-          </div>
+            )}
+            
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setKeyboardShortcutsOpen(prev => !prev)}
+              className="rounded-full"
+            >
+              <Keyboard className="w-5 h-5" />
+            </Button>
+            
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleTheme}
+              className="rounded-full"
+            >
+              {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </Button>
+            
+            <a
+              href="https://github.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <Github className="h-5 w-5" />
+            </a>
+          </nav>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column - Code Editor */}
-          <div className="space-y-6" ref={editorRef}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setConfigOpen(prev => !prev)}
-                  className="flex items-center gap-2"
-                >
-                  <Settings className="h-4 w-4" />
-                  {configOpen ? 'Hide Configuration' : 'Show Configuration'}
-                </Button>
-                
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setHistoryOpen(prev => !prev)}
-                  className="flex items-center gap-2"
-                >
-                  <History className="h-4 w-4" />
-                  History
-                </Button>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={analysisMethod === 'quick' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setAnalysisMethod('quick')}
-                >
-                  Quick
-                </Button>
-                <Button
-                  variant={analysisMethod === 'comprehensive' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setAnalysisMethod('comprehensive')}
-                >
-                  Comprehensive
-                </Button>
-                <Button
-                  variant={analysisMethod === 'custom' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => {
-                    setAnalysisMethod('custom')
-                    if (!configOpen) setConfigOpen(true)
-                  }}
-                >
-                  Custom
-                </Button>
-              </div>
-            </div>
-            
-            {/* Configuration Panel */}
-            {configOpen && (
-              <Card className="border-blue-100">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Analysis Configuration</CardTitle>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setConfigOpen(false)}
-                      className="h-8 w-8 p-0"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <AnalysisConfig
-                    language={language}
-                    onConfigChange={handleConfigChange}
-                    defaultConfig={analysisConfig}
-                  />
-                </CardContent>
-              </Card>
-            )}
-            
-            {/* History Panel */}
-            {historyOpen && (
-              <Card className="border-blue-100">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Analysis History</CardTitle>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setHistoryOpen(false)}
-                      className="h-8 w-8 p-0"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {analysisHistory.length > 0 ? (
-                    <div className="space-y-2">
-                      {analysisHistory.map((item) => (
-                        <div 
-                          key={item.id}
-                          className="flex items-center justify-between p-2 hover:bg-gray-50 rounded cursor-pointer"
-                          onClick={() => loadAnalysisFromHistory(item)}
-                        >
-                          <div>
-                            <div className="font-medium">{item.filename || 'Untitled'}</div>
-                            <div className="text-xs text-gray-500">
-                              {new Date(item.timestamp).toLocaleString()} • {item.language}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-4">
-                            <div className="text-sm">
-                              Score: <span className="font-medium">{item.score.toFixed(1)}</span>
-                            </div>
-                            <div className="text-sm">
-                              Issues: <span className="font-medium">{item.issueCount}</span>
-                            </div>
-                            <ChevronRight className="h-4 w-4 text-gray-400" />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-4 text-gray-500">
-                      No analysis history yet
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-            
-            {/* Keyboard Shortcuts Panel */}
-            {keyboardShortcutsOpen && (
-              <Card className="border-blue-100">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Keyboard Shortcuts</CardTitle>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setKeyboardShortcutsOpen(false)}
-                      className="h-8 w-8 p-0"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                      <span>Analyze Code</span>
-                      <kbd className="px-2 py-1 bg-gray-200 rounded text-xs">Ctrl+Enter</kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                      <span>Toggle Configuration</span>
-                      <kbd className="px-2 py-1 bg-gray-200 rounded text-xs">Ctrl+/</kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                      <span>Close Panels</span>
-                      <kbd className="px-2 py-1 bg-gray-200 rounded text-xs">Esc</kbd>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-            
-            <CodeEditor
-              code={code}
-              language={language}
-              filename={filename}
-              onChange={handleCodeChange}
-              onLanguageChange={handleLanguageChange}
-              onFilenameChange={handleFilenameChange}
-              disabled={isAnalyzing}
-            />
-            
-            {/* Analysis Controls */}
-            <Card>
+      {/* Hero Section */}
+      <section ref={heroRef} className="relative pt-32 pb-20 px-6 text-center overflow-hidden">
+        <div className="container mx-auto max-w-6xl">
+          <h1 className="hero-title text-5xl md:text-7xl font-bold mb-6 bg-gradient-to-r from-blue-600 via-purple-600 to-cyan-600 bg-clip-text text-transparent leading-tight">
+            AI-Powered Code
+            <br />
+            Analysis & Bug Detection
+          </h1>
+          <p className="hero-subtitle text-xl md:text-2xl text-gray-600 dark:text-gray-300 mb-8 max-w-3xl mx-auto leading-relaxed">
+            Detect bugs, security vulnerabilities, and performance issues in your code with advanced AI analysis. 
+            Get instant feedback and improve your code quality.
+          </p>
+          <div className="hero-cta flex flex-col sm:flex-row gap-4 justify-center items-center">
+            <Button 
+              size="lg" 
+              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-4 text-lg rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
+              onClick={() => document.getElementById('editor')?.scrollIntoView({ behavior: 'smooth' })}
+            >
+              <Play className="w-5 h-5 mr-2" />
+              Try It Now
+            </Button>
+            <Button 
+              variant="outline" 
+              size="lg" 
+              className="px-8 py-4 text-lg rounded-xl border-2 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all duration-300"
+              onClick={() => document.getElementById('circuit-city')?.scrollIntoView({ behavior: 'smooth' })}
+            >
+              Explore Features
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      {/* Circuit Board City Features Section */}
+      <CircuitBoardCity />
+
+      {/* Editor Section */}
+      <section id="editor" ref={editorRef} className="reveal-section py-20 px-6">
+        <div className="container mx-auto max-w-7xl">
+          <div className="text-center mb-12">
+            <h2 className="text-4xl font-bold mb-4 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              Code Analysis Studio
+            </h2>
+            <p className="text-xl text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
+              Paste your code below and get instant AI-powered analysis with detailed feedback
+            </p>
+          </div>
+
+          <div className="grid lg:grid-cols-2 gap-8">
+            {/* Code Editor */}
+            <Card className="editor-container border-0 bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm shadow-2xl">
               <CardHeader>
-                <CardTitle>Analysis Controls</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Code className="w-5 h-5" />
+                    Code Editor
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfigOpen(prev => !prev)}
+                      className="flex items-center gap-2"
+                    >
+                      <Settings className="h-4 w-4" />
+                      Config
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setHistoryOpen(prev => !prev)}
+                      className="flex items-center gap-2"
+                    >
+                      <History className="h-4 w-4" />
+                      History
+                    </Button>
+                  </div>
+                </div>
+                
+                {/* Analysis Method Tabs */}
+                <Tabs value={analysisMethod} onValueChange={(value) => setAnalysisMethod(value as AnalysisMethod)} className="w-full">
+                  <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="quick">Quick</TabsTrigger>
+                    <TabsTrigger value="comprehensive">Comprehensive</TabsTrigger>
+                    <TabsTrigger value="custom">Custom</TabsTrigger>
+                  </TabsList>
+                </Tabs>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <Button
+              <CardContent className="p-0">
+                {/* Configuration Panel */}
+                {configOpen && (
+                  <div className="p-6 border-t bg-gray-50/50 dark:bg-gray-700/50">
+                    <AnalysisConfig
+                      language={language}
+                      onConfigChange={handleConfigChange}
+                      defaultConfig={analysisConfig || undefined}
+                    />
+                  </div>
+                )}
+                
+                {/* History Panel */}
+                {historyOpen && (
+                  <div className="p-6 border-t bg-gray-50/50 dark:bg-gray-700/50">
+                    <div className="space-y-2">
+                      <h4 className="font-medium mb-3">Analysis History</h4>
+                      {analysisHistory.length > 0 ? (
+                        <div className="space-y-2">
+                          {analysisHistory.map((item) => (
+                            <div 
+                              key={item.id}
+                              className="flex items-center justify-between p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded cursor-pointer"
+                              onClick={() => loadAnalysisFromHistory(item)}
+                            >
+                              <div>
+                                <div className="font-medium">{item.filename || 'Untitled'}</div>
+                                <div className="text-xs text-gray-500">
+                                  {new Date(item.timestamp).toLocaleString()} • {item.language}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-4">
+                                <div className="text-sm">
+                                  Score: <span className="font-medium">{item.score.toFixed(1)}</span>
+                                </div>
+                                <div className="text-sm">
+                                  Issues: <span className="font-medium">{item.issueCount}</span>
+                                </div>
+                                <ChevronRight className="h-4 w-4 text-gray-400" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 text-gray-500">
+                          No analysis history yet
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                <CodeEditor
+                  code={code}
+                  language={language}
+                  filename={filename}
+                  onChange={handleCodeChange}
+                  onLanguageChange={handleLanguageChange}
+                  onFilenameChange={handleFilenameChange}
+                  disabled={isAnalyzing}
+                />
+                
+                <div className="p-6 border-t bg-gray-50/50 dark:bg-gray-700/50">
+                  <Button 
                     onClick={handleAnalyze}
                     disabled={isAnalyzing || !code.trim() || !isConnected}
-                    className="w-full"
-                    size="lg"
+                    className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white py-3 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300"
                   >
                     {isAnalyzing ? (
                       <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                         Analyzing Code...
                       </>
                     ) : (
                       <>
-                        <Play className="h-4 w-4 mr-2" />
+                        <Zap className="w-4 h-4 mr-2" />
                         Analyze Code
                       </>
                     )}
                   </Button>
                   
                   {!isConnected && (
-                    <div className="text-sm text-red-600 bg-red-50 p-3 rounded">
+                    <div className="text-sm text-red-600 bg-red-50 p-3 rounded mt-3">
                       ⚠️ Backend is not connected. Please make sure the FastAPI server is running on port 5000.
                     </div>
                   )}
                   
                   {error && (
-                    <div className="text-sm text-red-600 bg-red-50 p-3 rounded">
+                    <div className="text-sm text-red-600 bg-red-50 p-3 rounded mt-3">
                       {error}
                     </div>
                   )}
                   
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between mt-4">
                     <div className="text-xs text-gray-500">
                       <p>• Supports Python, JavaScript, TypeScript, Java, C++</p>
                       <p>• Detects bugs, security issues, and style problems</p>
-                      <p>• Provides suggestions and explanations</p>
                     </div>
                     
                     <div className="flex items-center gap-2">
@@ -663,62 +734,87 @@ export default function HomePage() {
                 </div>
               </CardContent>
             </Card>
-          </div>
 
-          {/* Right Column - Analysis Results */}
-          <div className="space-y-6">
-            {isAnalyzing && currentAnalysisId ? (
-              <AnalysisProgress
-                analysisId={currentAnalysisId}
-                language={language}
-                codeSize={code.split('\n').length}
-                onCancel={handleCancelAnalysis}
-                onComplete={() => {
-                  // This is handled by the WebSocket event listener
-                }}
-              />
-            ) : analysis ? (
-              useEnhancedResults ? (
-                <EnhancedResults
-                  analysis={analysis}
-                  onExport={handleExportReport}
-                />
-              ) : (
-                <AnalysisResults
-                  analysis={analysis}
-                  onExport={handleExportReport}
-                />
-              )
-            ) : (
-              <Card className="h-96 flex items-center justify-center">
-                <CardContent>
-                  <div className="text-center text-gray-500">
-                    <Code2 className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                    <h3 className="text-lg font-medium mb-2">No Analysis Yet</h3>
-                    <p className="text-sm">
-                      Enter your code in the editor and click &quot;Analyze Code&quot; to get started.
-                    </p>
+            {/* Results */}
+            <Card className="results-container border-0 bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm shadow-2xl">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="w-5 h-5" />
+                  Analysis Results
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {isAnalyzing && currentAnalysisId ? (
+                  <AnalysisProgress
+                    analysisId={currentAnalysisId}
+                    language={language}
+                    codeSize={code.split('\n').length}
+                    onCancel={handleCancelAnalysis}
+                    onComplete={() => {
+                      // This is handled by the WebSocket event listener
+                    }}
+                  />
+                ) : analysis ? (
+                  useEnhancedResults ? (
+                    <EnhancedResults
+                      analysis={analysis}
+                      onExport={handleExportReport}
+                    />
+                  ) : (
+                    <AnalysisResults
+                      analysis={analysis}
+                      onExport={handleExportReport}
+                    />
+                  )
+                ) : (
+                  <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+                    <BarChart3 className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                    <p className="text-lg">Run analysis to see results here</p>
+                    <p className="text-sm mt-2">Upload code or paste it in the editor to get started</p>
                   </div>
-                </CardContent>
-              </Card>
-            )}
+                )}
+              </CardContent>
+            </Card>
           </div>
         </div>
-      </main>
+      </section>
 
-      {/* Footer */}
-      <footer className="bg-white border-t border-gray-200 mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="text-center text-gray-500">
-            <p className="text-sm">
-              AI Code Reviewer - Sprint 2 • Built with Next.js, FastAPI, and AI
-            </p>
-            <p className="text-xs mt-2">
-              This is a development version. Analysis results are for demonstration purposes.
-            </p>
-          </div>
+      {/* Keyboard Shortcuts Modal */}
+      {keyboardShortcutsOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle>Keyboard Shortcuts</CardTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setKeyboardShortcutsOpen(false)}
+                  className="h-8 w-8 p-0"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-2 text-sm">
+                <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                  <span>Analyze Code</span>
+                  <kbd className="px-2 py-1 bg-gray-200 rounded text-xs">Ctrl+Enter</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                  <span>Toggle Configuration</span>
+                  <kbd className="px-2 py-1 bg-gray-200 rounded text-xs">Ctrl+/</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                  <span>Close Panels</span>
+                  <kbd className="px-2 py-1 bg-gray-200 rounded text-xs">Esc</kbd>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
-      </footer>
+      )}
     </div>
   )
 }
