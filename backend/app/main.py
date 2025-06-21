@@ -7,6 +7,7 @@ import logging
 import asyncio
 from typing import Dict, Any
 import time
+from datetime import datetime
 from collections import defaultdict
 
 from app.routers import analysis
@@ -408,6 +409,8 @@ async def run_analysis_with_progress(
 ):
     """Run analysis with detailed progress updates."""
     try:
+        # Track start time for processing time calculation
+        start_time = time.time()
         # Progress stages with more realistic timing
         stages = [
             ("Initializing analysis", "initialization", 5),
@@ -571,10 +574,26 @@ async def run_analysis_with_progress(
             'stage': 'completed'
         }, room=sid)
         
-        # Send completion with result
+        # Calculate processing time
+        processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+        
+        # Build complete response with metadata (similar to REST API)
+        complete_result = {
+            'analysis_id': analysis_id,
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'language': language,
+            'filename': filename,
+            'processing_time_ms': processing_time,
+            'issues': result.get('issues', []),
+            'metrics': result.get('metrics', {}),
+            'summary': result.get('summary', {}),
+            'suggestions': result.get('suggestions', [])
+        }
+        
+        # Send completion with complete result
         await sio.emit('analysis_complete', {
             'analysisId': analysis_id,
-            'result': result
+            'result': complete_result
         }, room=sid)
         
         # Send success notification
@@ -624,6 +643,71 @@ async def cancel_analysis(sid, data):
         return
     
     await cancel_analysis_internal(analysis_id, sid)
+
+@sio.event
+async def check_analysis_status(sid, data):
+    """Check the status of an analysis after reconnection."""
+    analysis_id = data.get('analysisId')
+    if not analysis_id:
+        return
+    
+    logger.info(f"🔍 Checking analysis status for {analysis_id} from client {sid}")
+    
+    # Check if analysis is still active
+    if analysis_id in active_analyses:
+        analysis_data = active_analyses[analysis_id]
+        task = analysis_data.get('task')
+        
+        if task and not task.done():
+            # Analysis is still running, send progress update
+            await sio.emit('analysis_progress', {
+                'analysisId': analysis_id,
+                'progress': analysis_data.get('progress', 0),
+                'message': 'Analysis still in progress...',
+                'stage': analysis_data.get('stage', 'processing')
+            }, room=sid)
+            
+            logger.info(f"📊 Analysis {analysis_id} still running - sent progress update")
+        elif task and task.done():
+            # Analysis completed, check result
+            try:
+                result = task.result()
+                await sio.emit('analysis_complete', {
+                    'analysisId': analysis_id,
+                    'result': result
+                }, room=sid)
+                
+                # Clean up
+                del active_analyses[analysis_id]
+                logger.info(f"✅ Analysis {analysis_id} was completed - sent result")
+            except Exception as e:
+                # Analysis failed
+                await sio.emit('analysis_error', {
+                    'analysisId': analysis_id,
+                    'error': str(e)
+                }, room=sid)
+                
+                # Clean up
+                del active_analyses[analysis_id]
+                logger.error(f"❌ Analysis {analysis_id} failed - sent error")
+        else:
+            # No active task, analysis may have been cancelled or lost
+            await sio.emit('analysis_error', {
+                'analysisId': analysis_id,
+                'error': 'Analysis was cancelled or lost during disconnection'
+            }, room=sid)
+            
+            # Clean up
+            del active_analyses[analysis_id]
+            logger.warning(f"⚠️ Analysis {analysis_id} was lost - notified client")
+    else:
+        # Analysis not found, likely completed or cancelled
+        await sio.emit('analysis_error', {
+            'analysisId': analysis_id,
+            'error': 'Analysis not found - it may have completed or been cancelled'
+        }, room=sid)
+        
+        logger.info(f"❓ Analysis {analysis_id} not found - likely completed or cancelled")
 
 async def cancel_analysis_internal(analysis_id: str, sid: str):
     """Internal function to cancel analysis."""

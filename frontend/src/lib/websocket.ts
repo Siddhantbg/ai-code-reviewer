@@ -479,7 +479,18 @@ export function useAnalysisSocket() {
       message?: string
       stage?: string
       startTime?: number
+      result?: any  // Store completed analysis result
     }
+  }>({})
+  
+  // Track pending completion callbacks
+  const completionCallbacksRef = useRef<{
+    [analysisId: string]: (result: any) => void
+  }>({})
+  
+  // Track analysis timeouts
+  const analysisTimeoutsRef = useRef<{
+    [analysisId: string]: NodeJS.Timeout
   }>({})
 
   useEffect(() => {
@@ -497,23 +508,56 @@ export function useAnalysisSocket() {
           stage: data.stage
         }
       }))
+      
+      // Reset analysis timeout on progress update
+      if (analysisTimeoutsRef.current[data.analysisId]) {
+        clearTimeout(analysisTimeoutsRef.current[data.analysisId])
+        // Set a new timeout (10 minutes for long analyses)
+        analysisTimeoutsRef.current[data.analysisId] = setTimeout(() => {
+          console.warn(`⏰ Analysis ${data.analysisId} timed out`)
+          handleAnalysisTimeout(data.analysisId)
+        }, 600000) // 10 minutes
+      }
     }
 
     const handleComplete = (data: AnalysisComplete) => {
       console.log('✅ Analysis complete:', data.analysisId)
+      
+      // Clear timeout
+      if (analysisTimeoutsRef.current[data.analysisId]) {
+        clearTimeout(analysisTimeoutsRef.current[data.analysisId])
+        delete analysisTimeoutsRef.current[data.analysisId]
+      }
+      
+      // Update status with result
       setAnalysisStatus(prev => ({
         ...prev,
         [data.analysisId]: {
           ...prev[data.analysisId],
           status: 'completed',
           progress: 100,
-          message: 'Analysis completed successfully'
+          message: 'Analysis completed successfully',
+          result: data.result
         }
       }))
+      
+      // Call completion callback if exists
+      const callback = completionCallbacksRef.current[data.analysisId]
+      if (callback) {
+        callback(data.result)
+        delete completionCallbacksRef.current[data.analysisId]
+      }
     }
 
     const handleError = (data: AnalysisError) => {
       console.error('❌ Analysis error:', data)
+      
+      // Clear timeout
+      if (analysisTimeoutsRef.current[data.analysisId]) {
+        clearTimeout(analysisTimeoutsRef.current[data.analysisId])
+        delete analysisTimeoutsRef.current[data.analysisId]
+      }
+      
       setAnalysisStatus(prev => ({
         ...prev,
         [data.analysisId]: {
@@ -522,10 +566,24 @@ export function useAnalysisSocket() {
           message: data.error
         }
       }))
+      
+      // Call error callback if exists
+      const callback = completionCallbacksRef.current[data.analysisId]
+      if (callback) {
+        callback(null) // Signal error with null result
+        delete completionCallbacksRef.current[data.analysisId]
+      }
     }
 
     const handleCancelled = (data: { analysisId: string }) => {
       console.log('🛑 Analysis cancelled:', data.analysisId)
+      
+      // Clear timeout
+      if (analysisTimeoutsRef.current[data.analysisId]) {
+        clearTimeout(analysisTimeoutsRef.current[data.analysisId])
+        delete analysisTimeoutsRef.current[data.analysisId]
+      }
+      
       setAnalysisStatus(prev => ({
         ...prev,
         [data.analysisId]: {
@@ -534,24 +592,87 @@ export function useAnalysisSocket() {
           message: 'Analysis was cancelled'
         }
       }))
+      
+      // Clean up callback
+      if (completionCallbacksRef.current[data.analysisId]) {
+        delete completionCallbacksRef.current[data.analysisId]
+      }
+    }
+    
+    const handleReconnect = () => {
+      console.log('🔄 WebSocket reconnected - checking for pending analyses')
+      
+      // Check if we have any running analyses that might have completed during disconnection
+      Object.keys(analysisStatus).forEach(analysisId => {
+        const status = analysisStatus[analysisId]
+        if (status.status === 'running' || status.status === 'pending') {
+          console.log(`🔍 Checking status of analysis ${analysisId} after reconnection`)
+          // Emit a status check event
+          socket.emit('check_analysis_status', { analysisId })
+        }
+      })
     }
 
+    // Persistent event listeners
     socket.on('analysis_progress', handleProgress)
     socket.on('analysis_complete', handleComplete)
     socket.on('analysis_error', handleError)
     socket.on('analysis_cancelled', handleCancelled)
+    socket.on('connect', handleReconnect)
 
     return () => {
       socket.off('analysis_progress', handleProgress)
       socket.off('analysis_complete', handleComplete)
       socket.off('analysis_error', handleError)
       socket.off('analysis_cancelled', handleCancelled)
+      socket.off('connect', handleReconnect)
+      
+      // Clear all timeouts
+      Object.values(analysisTimeoutsRef.current).forEach(timeout => {
+        clearTimeout(timeout)
+      })
+      analysisTimeoutsRef.current = {}
     }
-  }, [socket])
+  }, [socket, analysisStatus])
 
-  const startAnalysis = useCallback((analysisData: any) => {
+  // Helper function to handle analysis timeouts
+  const handleAnalysisTimeout = useCallback((analysisId: string) => {
+    setAnalysisStatus(prev => ({
+      ...prev,
+      [analysisId]: {
+        ...prev[analysisId],
+        status: 'error',
+        message: 'Analysis timed out - please try again'
+      }
+    }))
+    
+    // Clean up callback
+    if (completionCallbacksRef.current[analysisId]) {
+      completionCallbacksRef.current[analysisId](null)
+      delete completionCallbacksRef.current[analysisId]
+    }
+    
+    // Clean up timeout
+    if (analysisTimeoutsRef.current[analysisId]) {
+      delete analysisTimeoutsRef.current[analysisId]
+    }
+  }, [])
+
+  const startAnalysis = useCallback((analysisData: any, onComplete?: (result: any) => void) => {
     if (socket && connected) {
       console.log('🚀 Starting analysis:', analysisData.analysisId)
+      
+      // Store completion callback if provided
+      if (onComplete) {
+        completionCallbacksRef.current[analysisData.analysisId] = onComplete
+      }
+      
+      // Set initial timeout (2 minutes for initial response)
+      analysisTimeoutsRef.current[analysisData.analysisId] = setTimeout(() => {
+        console.warn(`⏰ Analysis ${analysisData.analysisId} initial timeout`)
+        handleAnalysisTimeout(analysisData.analysisId)
+      }, 120000) // 2 minutes
+      
       socket.emit('start_analysis', analysisData)
       setAnalysisStatus(prev => ({
         ...prev,
@@ -568,11 +689,23 @@ export function useAnalysisSocket() {
       console.warn('⚠️ Cannot start analysis: WebSocket not connected')
       return false
     }
-  }, [socket, connected])
+  }, [socket, connected, handleAnalysisTimeout])
 
   const cancelAnalysis = useCallback((analysisId: string) => {
+    console.log('🛑 Cancelling analysis:', analysisId)
+    
+    // Clear timeout
+    if (analysisTimeoutsRef.current[analysisId]) {
+      clearTimeout(analysisTimeoutsRef.current[analysisId])
+      delete analysisTimeoutsRef.current[analysisId]
+    }
+    
+    // Clean up callback
+    if (completionCallbacksRef.current[analysisId]) {
+      delete completionCallbacksRef.current[analysisId]
+    }
+    
     if (socket && connected) {
-      console.log('🛑 Cancelling analysis:', analysisId)
       socket.emit('cancel_analysis', { analysisId })
       
       setAnalysisStatus(prev => ({
@@ -586,11 +719,31 @@ export function useAnalysisSocket() {
       return true
     } else {
       console.warn('⚠️ Cannot cancel analysis: WebSocket not connected')
+      // Still update local status even if not connected
+      setAnalysisStatus(prev => ({
+        ...prev,
+        [analysisId]: {
+          ...prev[analysisId],
+          status: 'cancelled',
+          message: 'Analysis cancelled (offline)'
+        }
+      }))
       return false
     }
   }, [socket, connected])
 
   const clearAnalysisStatus = useCallback((analysisId: string) => {
+    // Clear timeout if exists
+    if (analysisTimeoutsRef.current[analysisId]) {
+      clearTimeout(analysisTimeoutsRef.current[analysisId])
+      delete analysisTimeoutsRef.current[analysisId]
+    }
+    
+    // Clean up callback
+    if (completionCallbacksRef.current[analysisId]) {
+      delete completionCallbacksRef.current[analysisId]
+    }
+    
     setAnalysisStatus(prev => {
       const newStatus = { ...prev }
       delete newStatus[analysisId]
@@ -600,6 +753,51 @@ export function useAnalysisSocket() {
 
   const getAnalysisStatus = useCallback((analysisId: string) => {
     return analysisStatus[analysisId] || null
+  }, [analysisStatus])
+  
+  // Get completed analysis result
+  const getAnalysisResult = useCallback((analysisId: string) => {
+    const status = analysisStatus[analysisId]
+    return status?.status === 'completed' ? status.result : null
+  }, [analysisStatus])
+  
+  // Check if an analysis is still running
+  const isAnalysisRunning = useCallback((analysisId: string) => {
+    const status = analysisStatus[analysisId]
+    return status?.status === 'running' || status?.status === 'pending'
+  }, [analysisStatus])
+  
+  // Wait for analysis completion with promise
+  const waitForAnalysis = useCallback((analysisId: string, timeoutMs: number = 600000): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      const status = analysisStatus[analysisId]
+      
+      // Check if already completed
+      if (status?.status === 'completed' && status.result) {
+        resolve(status.result)
+        return
+      }
+      
+      if (status?.status === 'error') {
+        reject(new Error(status.message || 'Analysis failed'))
+        return
+      }
+      
+      // Set up completion callback
+      const timeoutId = setTimeout(() => {
+        delete completionCallbacksRef.current[analysisId]
+        reject(new Error('Analysis timeout'))
+      }, timeoutMs)
+      
+      completionCallbacksRef.current[analysisId] = (result) => {
+        clearTimeout(timeoutId)
+        if (result) {
+          resolve(result)
+        } else {
+          reject(new Error('Analysis failed'))
+        }
+      }
+    })
   }, [analysisStatus])
 
   return {
@@ -611,6 +809,9 @@ export function useAnalysisSocket() {
     startAnalysis,
     cancelAnalysis,
     clearAnalysisStatus,
-    getAnalysisStatus
+    getAnalysisStatus,
+    getAnalysisResult,
+    isAnalysisRunning,
+    waitForAnalysis
   }
 }

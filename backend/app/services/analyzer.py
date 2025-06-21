@@ -38,10 +38,41 @@ class CodeAnalyzerService:
             },
             SupportedLanguage.JAVASCRIPT: {
                 "common_issues": [
-                    (r"console\.log\(", "Remove console.log statements in production", IssueType.STYLE, IssueSeverity.LOW),
-                    (r"eval\(", "Avoid using eval() - security risk", IssueType.SECURITY, IssueSeverity.HIGH),
-                    (r"==\s*[^=]", "Use === instead of == for strict equality", IssueType.BUG, IssueSeverity.MEDIUM),
-                    (r"var\s+", "Consider using let or const instead of var", IssueType.STYLE, IssueSeverity.LOW),
+                    # Security patterns
+                    (r"eval\(", "Avoid using eval() - serious security risk that can execute arbitrary code. Use JSON.parse() for data or Function constructor with caution.", IssueType.SECURITY, IssueSeverity.HIGH),
+                    (r"innerHTML\s*=.*\+", "Potential XSS vulnerability - user input in innerHTML. Use textContent, createElement, or sanitize input properly.", IssueType.SECURITY, IssueSeverity.HIGH),
+                    (r"document\.write\(", "Avoid document.write() as it can introduce XSS vulnerabilities and affects performance. Use DOM manipulation instead.", IssueType.SECURITY, IssueSeverity.MEDIUM),
+                    (r"location\.href\s*=.*\+", "Potential open redirect vulnerability. Validate URLs before redirecting.", IssueType.SECURITY, IssueSeverity.MEDIUM),
+                    
+                    # Performance patterns
+                    (r"getElementById.*for.*\(", "DOM query inside loop - cache element reference outside loop for better performance.", IssueType.PERFORMANCE, IssueSeverity.MEDIUM),
+                    (r"querySelector.*for.*\(", "DOM query inside loop - cache element reference outside loop for better performance.", IssueType.PERFORMANCE, IssueSeverity.MEDIUM),
+                    (r"addEventListener.*function\s*\(", "Consider using arrow functions to maintain lexical 'this' context in event handlers.", IssueType.STYLE, IssueSeverity.LOW),
+                    
+                    # Modern JavaScript practices
+                    (r"var\s+", "Consider using 'const' for constants or 'let' for variables instead of 'var' to avoid hoisting issues and improve scope control.", IssueType.STYLE, IssueSeverity.LOW),
+                    (r"==\s*[^=]", "Use strict equality (===) instead of loose equality (==) to avoid unexpected type coercion.", IssueType.BUG, IssueSeverity.MEDIUM),
+                    (r"function\s+\w+\s*\([^)]*\)\s*\{[^}]*\breturn\b", "Consider using arrow function syntax for concise function expressions.", IssueType.STYLE, IssueSeverity.LOW),
+                    
+                    # Error handling and best practices
+                    (r"fetch\((?![^)]*\.catch)", "Fetch call missing error handling - add .catch() or use try/catch with async/await.", IssueType.BUG, IssueSeverity.MEDIUM),
+                    (r"Promise\.(?!all|race).*(?!\.catch)", "Promise missing error handling - always include .catch() for proper error handling.", IssueType.BUG, IssueSeverity.MEDIUM),
+                    (r"setTimeout\(\s*function", "Consider using arrow functions with setTimeout for cleaner syntax and lexical 'this' binding.", IssueType.STYLE, IssueSeverity.LOW),
+                    
+                    # Code quality patterns
+                    (r"console\.log\(", "Remove console.log statements in production code. Use a proper logging library for production applications.", IssueType.STYLE, IssueSeverity.LOW),
+                    (r"alert\(", "Avoid alert() in production - use proper UI notifications or modal dialogs.", IssueType.STYLE, IssueSeverity.LOW),
+                    (r"confirm\(", "Consider using custom modal dialogs instead of browser confirm() for better UX.", IssueType.STYLE, IssueSeverity.LOW),
+                    
+                    # Memory and resource management
+                    (r"addEventListener.*(?!removeEventListener)", "Remember to remove event listeners to prevent memory leaks, especially in SPAs.", IssueType.MAINTAINABILITY, IssueSeverity.MEDIUM),
+                    (r"setInterval\(.*(?!clearInterval)", "Ensure intervals are cleared with clearInterval() to prevent memory leaks.", IssueType.BUG, IssueSeverity.MEDIUM),
+                    (r"setTimeout\(.*(?!clearTimeout)", "Consider clearing timeouts with clearTimeout() when component unmounts or when no longer needed.", IssueType.MAINTAINABILITY, IssueSeverity.LOW),
+                    
+                    # Constructive suggestions for clean code
+                    (r"function\s+\w+\s*\([^)]*\)\s*\{[^}]*\}", "Great function structure! Consider adding JSDoc documentation with @param, @returns, and @example tags for better maintainability.", IssueType.STYLE, IssueSeverity.LOW),
+                    (r"^(?!.*\/\*\*).*function", "Consider adding JSDoc comments to document function purpose, parameters, and return values.", IssueType.MAINTAINABILITY, IssueSeverity.LOW),
+                    (r"function.*\{[^}]*return[^}]*\}(?!.*catch)", "Consider adding error handling with try-catch blocks to make the function more robust.", IssueType.MAINTAINABILITY, IssueSeverity.LOW),
                 ]
             },
             SupportedLanguage.TYPESCRIPT: {

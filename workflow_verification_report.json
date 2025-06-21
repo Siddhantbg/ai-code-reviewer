@@ -1,0 +1,116 @@
+{
+  "timestamp": "2025-06-21T21:13:53.677269",
+  "summary": {
+    "total_tests": 10,
+    "passed_tests": 10,
+    "success_rate": 1.0
+  },
+  "file_results": {
+    "frontend_websocket": {
+      "success": true,
+      "file_exists": true,
+      "found": [
+        "completionCallbacksRef",
+        "analysisTimeoutsRef",
+        "handleReconnect",
+        "waitForAnalysis",
+        "check_analysis_status"
+      ],
+      "missing": [],
+      "coverage": 1.0
+    },
+    "frontend_page": {
+      "success": true,
+      "file_exists": true,
+      "found": [
+        "useAnalysisSocket",
+        "ConnectionMonitor",
+        "handleReconnect",
+        "handleRetryAnalysis"
+      ],
+      "missing": [],
+      "coverage": 1.0
+    },
+    "connection_monitor": {
+      "success": true,
+      "file_exists": true,
+      "found": [
+        "Auto-reconnecting",
+        "onRetryAnalysis",
+        "ConnectionStatus"
+      ],
+      "missing": [],
+      "coverage": 1.0
+    },
+    "backend_main": {
+      "success": true,
+      "file_exists": true,
+      "found": [
+        "check_analysis_status",
+        "Analysis still in progress",
+        "active_analyses"
+      ],
+      "missing": [],
+      "coverage": 1.0
+    },
+    "ai_service": {
+      "success": true,
+      "file_exists": true,
+      "found": [
+        "_cleanup_after_analysis",
+        "CPU_THROTTLE_DELAY",
+        "thread_pool",
+        "CPU_THREADS = 2"
+      ],
+      "missing": [],
+      "coverage": 1.0
+    },
+    "performance_optimizer": {
+      "success": true,
+      "file_exists": true,
+      "found": [
+        "max_concurrent_ai_operations = 1",
+        "_ai_operation_cleanup",
+        "adaptive_cpu_throttling"
+      ],
+      "missing": [],
+      "coverage": 1.0
+    }
+  },
+  "config_results": {
+    "configs": {
+      "frontend_ping_timeout": 120000,
+      "frontend_ping_interval": 60000,
+      "backend_ping_timeout": 120000,
+      "ai_cpu_threads": 2,
+      "max_ai_operations": 1
+    },
+    "issues": [],
+    "success": true
+  },
+  "integration_results": [
+    {
+      "name": "Frontend WebSocket Integration",
+      "success": true,
+      "details": "Page uses enhanced analysis socket hook"
+    },
+    {
+      "name": "Backend Status Checking",
+      "success": true,
+      "details": "Backend has analysis status checking endpoint"
+    },
+    {
+      "name": "AI Resource Optimization",
+      "success": true,
+      "details": "AI service and performance optimizer integrated"
+    }
+  ],
+  "features": {
+    "WebSocket Connection Management": true,
+    "Analysis Completion Handling": true,
+    "Connection Recovery": true,
+    "Resource Optimization": true,
+    "Backend Status Checking": true,
+    "Configuration Consistency": true
+  }
+}

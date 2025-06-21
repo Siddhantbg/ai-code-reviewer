@@ -2,10 +2,28 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 // Types for API responses
+export interface CodeIssue {
+  id: string
+  type: string
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  title: string
+  line_number?: number
+  column_number?: number
+  description: string
+  suggestion?: string
+  rule_id?: string
+  category?: string
+  code_snippet?: string
+  explanation?: string
+  confidence?: number
+}
+
 export interface CodeAnalysisResponse {
   analysis_id: string
   timestamp: string
   language: string
+  filename?: string
+  processing_time_ms: number
   summary: {
     overall_score: number
     total_issues: number
@@ -13,30 +31,21 @@ export interface CodeAnalysisResponse {
     high_issues: number
     medium_issues: number
     low_issues: number
+    lines_of_code?: number
+    complexity_score?: number
+    recommendation?: string
+  }
+  issues: CodeIssue[]
+  metrics: {
     lines_of_code: number
     complexity_score: number
-  }
-  issues: Array<{
-    id: string
-    type: string
-    severity: 'critical' | 'high' | 'medium' | 'low'
-    line_number?: number
-    column_number?: number
-    description: string
-    suggestion?: string
-    rule_id: string
-    category: string
-  }>
-  metrics: {
-    cyclomatic_complexity: number
     maintainability_index: number
-    technical_debt_ratio: number
+    test_coverage?: number | null
+    duplication_percentage: number
+    cyclomatic_complexity?: number
+    technical_debt_ratio?: number
   }
-  suggestions: Array<{
-    type: string
-    description: string
-    impact: string
-  }>
+  suggestions: string[]
 }
 
 export interface HealthResponse {

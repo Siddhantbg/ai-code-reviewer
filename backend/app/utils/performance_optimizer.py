@@ -14,20 +14,21 @@ class PerformanceOptimizer:
     """Performance optimization utilities for the backend"""
     
     def __init__(self):
-        # Resource limits
-        self.max_concurrent_analyses = 5
-        self.max_concurrent_ai_operations = 2
-        self.max_memory_usage_mb = 2048  # 2GB limit
-        self.max_cpu_usage_percent = 90.0
+        # Resource limits - reduced for better performance
+        self.max_concurrent_analyses = 3  # Reduced from 5
+        self.max_concurrent_ai_operations = 1  # Reduced from 2 to prevent CPU spikes
+        self.max_memory_usage_mb = 1536  # Reduced from 2048MB to 1.5GB
+        self.max_cpu_usage_percent = 80.0  # Reduced from 90% to 80%
         
         # Semaphores for limiting concurrent operations
         self.analysis_semaphore = asyncio.Semaphore(self.max_concurrent_analyses)
         self.ai_semaphore = asyncio.Semaphore(self.max_concurrent_ai_operations)
         
-        # Memory management
-        self.memory_cleanup_threshold = 1536  # 1.5GB - trigger cleanup
+        # Memory management - more aggressive cleanup
+        self.memory_cleanup_threshold = 1024  # 1GB - trigger cleanup earlier
         self.last_cleanup_time = 0
-        self.cleanup_interval = 300  # 5 minutes
+        self.cleanup_interval = 180  # 3 minutes - more frequent cleanup
+        self.ai_cleanup_threshold = 768  # 768MB - trigger AI-specific cleanup
         
         # Performance tracking
         self.operation_times = defaultdict(lambda: deque(maxlen=100))
@@ -57,18 +58,37 @@ class PerformanceOptimizer:
         return wrapper
         
     async def limit_ai_operations(self, func: Callable):
-        """Decorator to limit concurrent AI operations"""
+        """Decorator to limit concurrent AI operations with enhanced throttling"""
         @wraps(func)
         async def wrapper(*args, **kwargs):
+            # Check resource limits before starting AI operation
+            if not await self.check_resource_limits():
+                logger.warning("🚫 AI operation blocked due to resource limits")
+                raise Exception("Resource limits exceeded, AI operation blocked")
+                
             async with self.ai_semaphore:
                 start_time = time.time()
                 try:
+                    # CPU throttling before AI operation
+                    await asyncio.sleep(0.1)  # Small delay to reduce CPU spikes
+                    
                     result = await func(*args, **kwargs)
                     end_time = time.time()
-                    self.operation_times['ai_operation'].append(end_time - start_time)
+                    operation_time = end_time - start_time
+                    self.operation_times['ai_operation'].append(operation_time)
+                    
+                    # Adaptive throttling based on operation time
+                    if operation_time > 10:  # If operation took >10s, add extra delay
+                        await asyncio.sleep(0.2)
+                    
+                    # Post-operation memory cleanup if needed
+                    await self._ai_operation_cleanup()
+                    
                     return result
                 except Exception as e:
                     logger.error(f"❌ AI operation failed: {e}")
+                    # Cleanup even on failure
+                    await self._ai_operation_cleanup()
                     raise
         return wrapper
         
@@ -123,6 +143,9 @@ class PerformanceOptimizer:
                 new_deque = deque(list(self.resource_snapshots)[-30:], maxlen=60)
                 self.resource_snapshots = new_deque
                 
+            # Additional AI-specific cleanup
+            await self._ai_specific_cleanup()
+            
             self.last_cleanup_time = time.time()
             logger.info("✅ Emergency cleanup completed")
             
@@ -161,6 +184,79 @@ class PerformanceOptimizer:
             
         except Exception as e:
             logger.error(f"❌ Error during periodic cleanup: {e}")
+    
+    async def adaptive_cpu_throttling(self, operation_type: str = "default"):
+        """Apply adaptive CPU throttling based on current load"""
+        try:
+            import psutil
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            
+            # Apply throttling based on CPU usage
+            if cpu_percent > 85:
+                throttle_delay = 0.5  # Heavy throttling
+            elif cpu_percent > 70:
+                throttle_delay = 0.3  # Medium throttling
+            elif cpu_percent > 50:
+                throttle_delay = 0.1  # Light throttling
+            else:
+                throttle_delay = 0.05  # Minimal throttling
+            
+            # AI operations get extra throttling
+            if operation_type == "ai":
+                throttle_delay *= 1.5
+            
+            if throttle_delay > 0.05:
+                logger.debug(f"Applying CPU throttling: {throttle_delay}s for {operation_type} operation")
+                await asyncio.sleep(throttle_delay)
+                
+        except Exception as e:
+            logger.debug(f"Error in adaptive CPU throttling: {e}")
+            # Fallback throttling
+            await asyncio.sleep(0.05)
+    
+    async def _ai_operation_cleanup(self):
+        """Cleanup after AI operations to prevent memory leaks"""
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / (1024 * 1024)
+            
+            # If memory usage is high after AI operation, perform cleanup
+            if memory_mb > self.ai_cleanup_threshold:
+                logger.debug(f"🧹 AI operation cleanup triggered (memory: {memory_mb:.1f}MB)")
+                collected = gc.collect()
+                if collected > 0:
+                    logger.debug(f"Collected {collected} objects after AI operation")
+                    
+        except Exception as e:
+            logger.debug(f"Error in AI operation cleanup: {e}")
+    
+    async def _ai_specific_cleanup(self):
+        """AI-specific memory cleanup"""
+        try:
+            # Force cleanup of AI-related objects
+            import sys
+            
+            # Clear AI service caches if accessible
+            try:
+                from app.services.ai_service import ai_analyzer
+                if hasattr(ai_analyzer, '_cleanup_after_analysis'):
+                    await ai_analyzer._cleanup_after_analysis()
+            except ImportError:
+                pass
+            
+            # Force garbage collection with focus on generation 1 and 2
+            collected_0 = gc.collect(0)
+            collected_1 = gc.collect(1) 
+            collected_2 = gc.collect(2)
+            
+            total_collected = collected_0 + collected_1 + collected_2
+            if total_collected > 0:
+                logger.debug(f"AI-specific cleanup collected {total_collected} objects")
+                
+        except Exception as e:
+            logger.debug(f"Error in AI-specific cleanup: {e}")
             
     async def _should_perform_cleanup(self) -> bool:
         """Determine if cleanup should be performed"""
@@ -299,3 +395,12 @@ class CircuitBreaker:
 
 # Global performance optimizer instance
 performance_optimizer = PerformanceOptimizer()
+
+# Decorator functions for easy use
+async def throttle_ai_operation(func):
+    """Throttle AI operations to prevent resource exhaustion"""
+    return await performance_optimizer.limit_ai_operations(func)
+
+async def throttle_analysis_operation(func):
+    """Throttle analysis operations to prevent resource exhaustion"""
+    return await performance_optimizer.limit_concurrent_analyses(func)

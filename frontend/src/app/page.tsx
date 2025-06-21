@@ -10,8 +10,9 @@ import AnalysisConfig from '@/components/AnalysisConfig'
 import AnalysisProgress from '@/components/AnalysisProgress'
 import EpicLoader from '@/components/EpicLoader'
 import CircuitBoardCity from '@/components/CircuitBoardCity'
+import ConnectionMonitor, { ConnectionStatus } from '@/components/ConnectionMonitor'
 import { apiClient, CodeAnalysisResponse } from '@/lib/api'
-import { useSocket } from '@/lib/websocket'
+import { useSocket, useAnalysisSocket } from '@/lib/websocket'
 import { useToast } from '@/hooks/use-toast'
 import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
@@ -82,11 +83,37 @@ export default function HomePage() {
   const heroRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   
-  // WebSocket connection
-  const { socket, connected: wsConnected } = useSocket()
+  // WebSocket connection with analysis support
+  const { socket, connected: wsConnected, connecting: wsConnecting, error: wsError } = useSocket()
+  const { 
+    startAnalysis, 
+    waitForAnalysis, 
+    cancelAnalysis, 
+    getAnalysisStatus,
+    isAnalysisRunning,
+    analysisStatus 
+  } = useAnalysisSocket()
   
   // Keyboard shortcuts reference
   const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false)
+  
+  // Connection management
+  const handleReconnect = useCallback(() => {
+    if (socket && !wsConnected) {
+      console.log('🔄 Manual reconnection attempt')
+      socket.connect()
+    }
+  }, [socket, wsConnected])
+  
+  const handleRetryAnalysis = useCallback(() => {
+    if (currentAnalysisId) {
+      // Cancel current analysis and restart
+      handleCancelAnalysis()
+      setTimeout(() => {
+        handleAnalyze()
+      }, 1000)
+    }
+  }, [currentAnalysisId])
 
   // Initialize animations and check connection
   useEffect(() => {
@@ -223,8 +250,8 @@ export default function HomePage() {
 
     try {
       // Map frontend analysis types to backend enums with appropriate severity
-      let backendAnalysisType: string
-      let severityThreshold = 'low'
+      let backendAnalysisType: 'full' | 'bugs_only' | 'security_only' | 'performance_only' | 'style_only'
+      let severityThreshold: 'critical' | 'high' | 'medium' | 'low' = 'low'
       
       switch (analysisMethod) {
         case 'full':
@@ -470,14 +497,19 @@ export default function HomePage() {
   }, [])
   
   const handleCancelAnalysis = useCallback(() => {
-    if (socket && wsConnected && currentAnalysisId) {
-      socket.emit('cancel_analysis', { analysisId: currentAnalysisId })
+    if (currentAnalysisId) {
+      const cancelled = cancelAnalysis(currentAnalysisId)
+      
+      if (cancelled) {
+        toast.success('Analysis cancelled')
+      } else {
+        toast.error('Failed to cancel analysis - it may have already completed')
+      }
     }
     
     setIsAnalyzing(false)
     setCurrentAnalysisId(null)
-    toast.success('Analysis cancelled')
-  }, [socket, wsConnected, currentAnalysisId])
+  }, [currentAnalysisId, cancelAnalysis])
   
   const loadAnalysisFromHistory = useCallback((historyItem: AnalysisHistoryItem) => {
     // In a real app, this would fetch the analysis from the server
@@ -515,21 +547,7 @@ export default function HomePage() {
             <a href="#editor" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 transition-colors">Analyzer</a>
             
             {/* Connection Status */}
-            <div className="flex items-center gap-2">
-              {isConnected === null ? (
-                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-              ) : isConnected ? (
-                <>
-                  <CheckCircle className="h-4 w-4 text-green-500" />
-                  <span className="text-sm text-green-600">Connected</span>
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="h-4 w-4 text-red-500" />
-                  <span className="text-sm text-red-600">Disconnected</span>
-                </>
-              )}
-            </div>
+            <ConnectionStatus isConnected={wsConnected} isConnecting={wsConnecting} />
             
             {/* WebSocket Status */}
             {isConnected && (
@@ -582,6 +600,15 @@ export default function HomePage() {
           </nav>
         </div>
       </header>
+
+      {/* Connection Monitor */}
+      <ConnectionMonitor
+        isConnected={wsConnected}
+        isAnalyzing={isAnalyzing}
+        analysisId={currentAnalysisId}
+        onReconnect={handleReconnect}
+        onRetryAnalysis={handleRetryAnalysis}
+      />
 
       {/* Hero Section */}
       <section ref={heroRef} className="relative pt-32 pb-20 px-6 text-center overflow-hidden">

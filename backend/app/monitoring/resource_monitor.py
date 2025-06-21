@@ -61,8 +61,10 @@ class ResourceMonitor:
         # Resource tracking
         self.active_connections = 0
         self.active_analyses = 0
+        self.active_ai_operations = 0  # Track AI operations separately
         self.peak_memory = 0
         self.peak_cpu = 0
+        self.ai_operation_times = deque(maxlen=100)  # Track AI operation performance
         
         # Process reference
         self.process = psutil.Process()
@@ -287,6 +289,14 @@ class ResourceMonitor:
     def update_analysis_count(self, count: int):
         """Update active analysis count"""
         self.active_analyses = count
+    
+    def update_ai_operation_count(self, count: int):
+        """Update active AI operation count"""
+        self.active_ai_operations = count
+    
+    def record_ai_operation_time(self, operation_time: float):
+        """Record AI operation time"""
+        self.ai_operation_times.append(operation_time)
         
     def record_request(self, endpoint: str):
         """Record API request"""
