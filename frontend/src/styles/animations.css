@@ -1,0 +1,76 @@
+
+/* Animation keyframes and utilities */
+/* Custom animations */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-20px); }
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes progressFill {
+  0% { width: 0%; }
+  100% { width: 100%; }
+}
+
+  @keyframes particleExplosion {
+    0% {
+      transform: translate(0, 0) scale(1);
+      opacity: 1;
+    }
+    100% {
+      transform: translate(var(--random-x, 100px), var(--random-y, -100px)) scale(0);
+      opacity: 0;
+    }
+  }
+
+  /* Epic Loader Animations */
+  @keyframes codeFlow {
+    0% { opacity: 0.3; transform: translateX(-20px); }
+    50% { opacity: 1; transform: translateX(0px); }
+    100% { opacity: 0.3; transform: translateX(20px); }
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  .animate-pulse-slow {
+    animation: pulse-slow 4s ease-in-out infinite;
+  }
+
+  .animate-gradient {
+    background: linear-gradient(-45deg, #667eea, #764ba2, #f093fb, #f5576c);
+    background-size: 400% 400%;
+    animation: gradient-shift 15s ease infinite;
+  }
+
+  .animate-spin-slow {
+    animation: spin-slow 3s linear infinite;
+  }
+
+  .code-animation {
+    animation: codeFlow 3s ease-in-out infinite;
+  }
+
+  .progress-animation {
+    animation: progressFill 2s ease-out forwards;
+  }
+
+  .particle-explosion {
+    animation: particleExplosion 1s ease-out forwards;
+  }
