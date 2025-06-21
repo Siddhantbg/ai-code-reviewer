@@ -1,5 +1,4 @@
 "use client"
-
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -58,6 +57,7 @@ interface AnalysisHistoryItem {
 }
 
 export default function HomePage() {
+  const containerRef = useRef<HTMLDivElement>(null)
   const [code, setCode] = useState('')
   const [language, setLanguage] = useState('python')
   const [filename, setFilename] = useState('')
@@ -90,7 +90,9 @@ export default function HomePage() {
   // Initialize animations and check connection
   useEffect(() => {
     // Initial setup - hide main content until loader completes
-    gsap.set(".main-app", { opacity: 0 })
+    if (containerRef.current) {
+      gsap.set(containerRef.current, { opacity: 0 })
+    }
     
     const checkConnection = async () => {
       try {
@@ -105,7 +107,7 @@ export default function HomePage() {
     checkConnection()
     
     // Setup interval to periodically check connection
-    const interval = setInterval(checkConnection, 30000)
+    const interval = setInterval(checkConnection, 30000) // Check every 30 seconds
     
     return () => clearInterval(interval)
   }, [])
@@ -114,11 +116,13 @@ export default function HomePage() {
     setShowLoader(false)
     setShowMainContent(true)
     
-    // Fade in main content
-    gsap.fromTo(".main-app", 
-      { opacity: 0, y: 50 },
-      { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }
-    )
+    // Fade in main content with ref check
+    if (containerRef.current) {
+      gsap.fromTo(containerRef.current, 
+        { opacity: 0, y: 50 },
+        { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }
+      )
+    }
 
     // Initialize main page animations after loader
     setTimeout(() => {
@@ -128,38 +132,57 @@ export default function HomePage() {
 
   const initializeMainAnimations = () => {
     // Hero entrance animation
-    const heroTl = gsap.timeline()
-    heroTl.from(".hero-title", {
-      duration: 1.2,
-      y: 100,
-      opacity: 0,
-      ease: "power3.out"
-    })
-    .from(".hero-subtitle", {
-      duration: 0.8,
-      y: 50,
-      opacity: 0,
-      ease: "power2.out"
-    }, "-=0.6")
-    .from(".hero-cta", {
-      duration: 0.6,
-      scale: 0,
-      opacity: 0,
-      ease: "back.out(1.7)"
-    }, "-=0.4")
+    const heroTitle = document.querySelector(".hero-title")
+    const heroSubtitle = document.querySelector(".hero-subtitle") 
+    const heroCta = document.querySelector(".hero-cta")
+    
+    if (heroTitle || heroSubtitle || heroCta) {
+      const heroTl = gsap.timeline()
+      
+      if (heroTitle) {
+        heroTl.from(heroTitle, {
+          duration: 1.2,
+          y: 100,
+          opacity: 0,
+          ease: "power3.out"
+        })
+      }
+      
+      if (heroSubtitle) {
+        heroTl.from(heroSubtitle, {
+          duration: 0.8,
+          y: 50,
+          opacity: 0,
+          ease: "power2.out"
+        }, "-=0.6")
+      }
+      
+      if (heroCta) {
+        heroTl.from(heroCta, {
+          duration: 0.6,
+          scale: 0,
+          opacity: 0,
+          ease: "back.out(1.7)"
+        }, "-=0.4")
+      }
+    }
 
     // Floating animations for background elements
-    gsap.to(".floating-element", {
-      y: -20,
-      duration: 3,
-      repeat: -1,
-      yoyo: true,
-      ease: "power1.inOut",
-      stagger: 0.5
-    })
+    const floatingElements = document.querySelectorAll(".floating-element")
+    if (floatingElements.length > 0) {
+      gsap.to(floatingElements, {
+        y: -20,
+        duration: 3,
+        repeat: -1,
+        yoyo: true,
+        ease: "power1.inOut",
+        stagger: 0.5
+      })
+    }
 
     // Scroll animations
-    gsap.utils.toArray(".reveal-section").forEach((section: any) => {
+    const revealSections = document.querySelectorAll(".reveal-section")
+    revealSections.forEach((section) => {
       gsap.from(section, {
         y: 100,
         opacity: 0,
@@ -236,8 +259,8 @@ export default function HomePage() {
           analysis_type: analysisType,
           include_suggestions: true,
           include_explanations: true,
-          severity_threshold: severityThreshold
-          // config: analysisConfig
+          severity_threshold: severityThreshold,
+          config: analysisConfig
         })
         
         // Listen for completion
@@ -274,8 +297,8 @@ export default function HomePage() {
           analysis_type: analysisType,
           include_suggestions: true,
           include_explanations: true,
-          severity_threshold: severityThreshold
-          // config: analysisConfig
+          severity_threshold: severityThreshold,
+          config: analysisConfig
         })
 
         setAnalysis(response)
@@ -439,7 +462,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className={`main-app min-h-screen ${isDarkMode ? 'dark' : ''}`}>
+    <div ref={containerRef} className={`main-app min-h-screen ${isDarkMode ? 'dark' : ''}`}>
       {/* Background Elements */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="floating-element absolute top-20 left-10 w-32 h-32 bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-full blur-xl"></div>
@@ -703,7 +726,7 @@ export default function HomePage() {
                   
                   {!isConnected && (
                     <div className="text-sm text-red-600 bg-red-50 p-3 rounded mt-3">
-                      ⚠️ Backend is not connected. Please make sure the FastAPI server is running on port 5000.
+                      ⚠️ Backend is not connected. Please make sure the FastAPI server is running on port 8000.
                     </div>
                   )}
                   
@@ -717,6 +740,7 @@ export default function HomePage() {
                     <div className="text-xs text-gray-500">
                       <p>• Supports Python, JavaScript, TypeScript, Java, C++</p>
                       <p>• Detects bugs, security issues, and style problems</p>
+                      <p>• Provides suggestions and explanations</p>
                     </div>
                     
                     <div className="flex items-center gap-2">
