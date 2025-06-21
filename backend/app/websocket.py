@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 # Create Socket.IO server
 sio = socketio.AsyncServer(
     cors_allowed_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    ping_timeout=60,
+    ping_interval=25,
+    max_http_buffer_size=10**6,
+    async_mode='asgi',
     logger=True,
     engineio_logger=True
 )

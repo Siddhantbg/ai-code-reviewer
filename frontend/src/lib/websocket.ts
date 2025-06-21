@@ -68,14 +68,14 @@ export function useSocket(url?: string): UseSocketReturn {
     
     try {
       socketRef.current = io(socketUrl, {
-        transports: ['websocket', 'polling'],
+        transports: ['websocket', 'polling'], // Ensure polling fallback
         upgrade: true,
-        timeout: 10000,
+        timeout: 10000, // Connection timeout
+        pingTimeout: 60000, // 60 seconds - match backend
+        pingInterval: 25000, // 25 seconds - match backend
         forceNew: false,
         autoConnect: true,
-        reconnection: false,
-        pingTimeout: 30000,
-        pingInterval: 10000,
+        reconnection: false, // Using custom reconnection logic
         closeOnBeforeunload: false,
         query: {
           clientType: 'react-frontend',
