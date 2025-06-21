@@ -364,7 +364,7 @@ class AICodeAnalyzer:
                 elif any(word in bug_lower for word in ['warning', 'potential', 'risk']):
                     severity = IssueSeverity.MEDIUM
                     
-                issues.append(CodeIssue(
+                issue = CodeIssue(
                     id=f"bug_{uuid.uuid4().hex[:8]}",
                     type=IssueType.BUG,
                     severity=severity,
@@ -376,7 +376,8 @@ class AICodeAnalyzer:
                     code_snippet=None,
                     explanation=None,
                     confidence=0.8
-                ))
+                )
+                issues.append(issue.dict())  # Convert to dictionary
 
         # Process security issues
         for i, issue in enumerate(security_issues):
@@ -385,7 +386,7 @@ class AICodeAnalyzer:
                 if any(word in issue.lower() for word in ['injection', 'xss', 'auth', 'critical']):
                     severity = IssueSeverity.CRITICAL
                     
-                issues.append(CodeIssue(
+                issue_obj = CodeIssue(
                     id=f"security_{uuid.uuid4().hex[:8]}",
                     type=IssueType.SECURITY,
                     severity=severity,
@@ -397,12 +398,13 @@ class AICodeAnalyzer:
                     code_snippet=None,
                     explanation=None,
                     confidence=0.8
-                ))
+                )
+                issues.append(issue_obj.dict())  # Convert to dictionary
                 
         # Process performance issues
         for i, issue in enumerate(performance_issues):
             if isinstance(issue, str) and len(issue.strip()) > 1:
-                issues.append(CodeIssue(
+                issue_obj = CodeIssue(
                     id=f"perf_{uuid.uuid4().hex[:8]}",
                     type=IssueType.PERFORMANCE,
                     severity=IssueSeverity.LOW,
@@ -414,12 +416,13 @@ class AICodeAnalyzer:
                     code_snippet=None,
                     explanation=None,
                     confidence=0.7
-                ))
+                )
+                issues.append(issue_obj.dict())  # Convert to dictionary
         
         # Process quality issues
         for i, issue in enumerate(quality_issues):
             if isinstance(issue, str) and len(issue.strip()) > 1:
-                issues.append(CodeIssue(
+                issue_obj = CodeIssue(
                     id=f"quality_{uuid.uuid4().hex[:8]}",
                     type=IssueType.STYLE,
                     severity=IssueSeverity.LOW,
@@ -431,7 +434,8 @@ class AICodeAnalyzer:
                     code_snippet=None,
                     explanation=None,
                     confidence=0.7
-                ))
+                )
+                issues.append(issue_obj.dict())  # Convert to dictionary
         
         logger.info(f"Created {len(issues)} total issues")
         
@@ -440,7 +444,7 @@ class AICodeAnalyzer:
         
         # Use AI score directly but cap it if critical issues exist
         actual_score = max(1, min(10, score))
-        critical_count = len([i for i in issues if i.severity == IssueSeverity.CRITICAL])
+        critical_count = len([i for i in issues if i.get('severity') == IssueSeverity.CRITICAL])
         if critical_count > 0:
             actual_score = min(actual_score, 3)
 
@@ -455,21 +459,21 @@ class AICodeAnalyzer:
         # Create summary
         summary = AnalysisSummary(
             total_issues=len(issues),
-            critical_issues=len([i for i in issues if i.severity == IssueSeverity.CRITICAL]),
-            high_issues=len([i for i in issues if i.severity == IssueSeverity.HIGH]),
-            medium_issues=len([i for i in issues if i.severity == IssueSeverity.MEDIUM]),
-            low_issues=len([i for i in issues if i.severity == IssueSeverity.LOW]),
+            critical_issues=len([i for i in issues if i.get('severity') == IssueSeverity.CRITICAL]),
+            high_issues=len([i for i in issues if i.get('severity') == IssueSeverity.HIGH]),
+            medium_issues=len([i for i in issues if i.get('severity') == IssueSeverity.MEDIUM]),
+            low_issues=len([i for i in issues if i.get('severity') == IssueSeverity.LOW]),
             overall_score=actual_score,
             recommendation=self._get_recommendation(actual_score, len(issues), ai_data)
         )
         
         # Generate suggestions
-        suggestions = [i.description for i in issues if i.description]
+        suggestions = [i.get('description', '') for i in issues if i.get('description')]
         
         return {
-            "issues": issues,
-            "metrics": metrics,
-            "summary": summary,
+            "issues": issues,  # Already converted to dictionaries above
+            "metrics": metrics.dict(),  # Convert to dictionary
+            "summary": summary.dict(),  # Convert to dictionary
             "suggestions": suggestions
         }
     

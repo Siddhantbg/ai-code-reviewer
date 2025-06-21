@@ -241,7 +241,7 @@ async def run_analysis_with_progress(
         # Send completion with result
         await sio.emit('analysis_complete', {
             'analysisId': analysis_id,
-            'result': result.dict()
+            'result': result
         }, room=sid)
         
         # Send success notification
