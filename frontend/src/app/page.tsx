@@ -45,7 +45,8 @@ interface AnalysisConfigType {
   preset: string | null
 }
 
-type AnalysisMethod = 'quick' | 'comprehensive' | 'custom'
+// Updated to match backend enum values
+type AnalysisMethod = 'full' | 'bugs_only' | 'security_only' | 'performance_only' | 'style_only'
 
 interface AnalysisHistoryItem {
   id: string
@@ -66,7 +67,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState<boolean | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
-  const [analysisMethod, setAnalysisMethod] = useState<AnalysisMethod>('comprehensive')
+  const [analysisMethod, setAnalysisMethod] = useState<AnalysisMethod>('full') // Updated default
   const [analysisConfig, setAnalysisConfig] = useState<AnalysisConfigType | null>(null)
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null)
   const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistoryItem[]>([])
@@ -221,33 +222,60 @@ export default function HomePage() {
     setCurrentAnalysisId(analysisId)
 
     try {
-      // Determine severity threshold based on analysis method
+      // Map frontend analysis types to backend enums with appropriate severity
+      let backendAnalysisType: string
       let severityThreshold = 'low'
-      let analysisType = 'comprehensive'
       
-      if (analysisMethod === 'quick') {
-        severityThreshold = 'medium'
-        analysisType = 'quick'
-      } else if (analysisMethod === 'comprehensive') {
-        severityThreshold = 'low'
-        analysisType = 'comprehensive'
-      } else if (analysisMethod === 'custom') {
-        // Use custom configuration - derive severity threshold from severityLevels
-        if (analysisConfig?.severityLevels) {
-          if (analysisConfig.severityLevels.critical) {
-            severityThreshold = 'critical'
-          } else if (analysisConfig.severityLevels.high) {
-            severityThreshold = 'high'
-          } else if (analysisConfig.severityLevels.medium) {
-            severityThreshold = 'medium'
-          } else {
-            severityThreshold = 'low'
-          }
+      switch (analysisMethod) {
+        case 'full':
+          backendAnalysisType = 'full'
+          severityThreshold = 'low'
+          break
+        case 'bugs_only':
+          backendAnalysisType = 'bugs_only'
+          severityThreshold = 'medium'
+          break
+        case 'security_only':
+          backendAnalysisType = 'security_only'
+          severityThreshold = 'high'
+          break
+        case 'performance_only':
+          backendAnalysisType = 'performance_only'
+          severityThreshold = 'medium'
+          break
+        case 'style_only':
+          backendAnalysisType = 'style_only'
+          severityThreshold = 'low'
+          break
+        default:
+          backendAnalysisType = 'full'
+          severityThreshold = 'low'
+      }
+      
+      // Override severity threshold for custom config
+      if (analysisConfig?.severityLevels) {
+        if (analysisConfig.severityLevels.critical) {
+          severityThreshold = 'critical'
+        } else if (analysisConfig.severityLevels.high) {
+          severityThreshold = 'high'
+        } else if (analysisConfig.severityLevels.medium) {
+          severityThreshold = 'medium'
         } else {
           severityThreshold = 'low'
         }
-        analysisType = 'custom'
       }
+
+      console.log('🔍 Analysis request data:', {
+        analysisId,
+        code: code.substring(0, 100) + '...',
+        language,
+        filename: filename || undefined,
+        analysis_type: backendAnalysisType,
+        include_suggestions: true,
+        include_explanations: true,
+        severity_threshold: severityThreshold,
+        config: analysisConfig
+      })
       
       // If using WebSockets, emit analysis request
       if (socket && wsConnected) {
@@ -256,7 +284,7 @@ export default function HomePage() {
           code,
           language,
           filename: filename || undefined,
-          analysis_type: analysisType,
+          analysis_type: backendAnalysisType, // Use mapped value
           include_suggestions: true,
           include_explanations: true,
           severity_threshold: severityThreshold,
@@ -294,7 +322,7 @@ export default function HomePage() {
           code,
           language,
           filename: filename || undefined,
-          analysis_type: analysisType,
+          analysis_type: backendAnalysisType, // Use mapped value
           include_suggestions: true,
           include_explanations: true,
           severity_threshold: severityThreshold,
@@ -437,8 +465,8 @@ export default function HomePage() {
   
   const handleConfigChange = useCallback((config: AnalysisConfigType) => {
     setAnalysisConfig(config)
-    // Automatically switch to custom analysis method when config changes
-    setAnalysisMethod('custom')
+    // Automatically switch to style_only analysis method when config changes (closest to custom)
+    setAnalysisMethod('style_only')
   }, [])
   
   const handleCancelAnalysis = useCallback(() => {
@@ -634,12 +662,14 @@ export default function HomePage() {
                   </div>
                 </div>
                 
-                {/* Analysis Method Tabs */}
+                {/* Analysis Method Tabs - Updated with backend enum values */}
                 <Tabs value={analysisMethod} onValueChange={(value) => setAnalysisMethod(value as AnalysisMethod)} className="w-full">
-                  <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="quick">Quick</TabsTrigger>
-                    <TabsTrigger value="comprehensive">Comprehensive</TabsTrigger>
-                    <TabsTrigger value="custom">Custom</TabsTrigger>
+                  <TabsList className="grid w-full grid-cols-5">
+                    <TabsTrigger value="full">Full</TabsTrigger>
+                    <TabsTrigger value="bugs_only">Bugs</TabsTrigger>
+                    <TabsTrigger value="security_only">Security</TabsTrigger>
+                    <TabsTrigger value="performance_only">Performance</TabsTrigger>
+                    <TabsTrigger value="style_only">Style</TabsTrigger>
                   </TabsList>
                 </Tabs>
               </CardHeader>

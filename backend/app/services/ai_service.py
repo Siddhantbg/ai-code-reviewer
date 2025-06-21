@@ -5,7 +5,7 @@ from pathlib import Path
 import logging
 from llama_cpp import Llama
 
-from app.models.requests import SupportedLanguage, AnalysisType
+from app.models.requests import SupportedLanguage, AnalysisType, CodeAnalysisRequest
 from app.models.responses import IssueSeverity, IssueType
 
 # Configure logging
@@ -57,18 +57,30 @@ class AICodeAnalyzer:
             logger.error(f"Failed to load DeepSeek Coder model: {str(e)}")
             self.model_loaded = False
     
-    def analyze_code(self, 
-                     code: str, 
-                     language: SupportedLanguage, 
-                     analysis_type: AnalysisType = AnalysisType.FULL) -> Dict[str, Any]:
-        """Analyze code using the DeepSeek Coder model."""
+    async def analyze_code(self, request: CodeAnalysisRequest) -> Dict[str, Any]:
+        """
+        Analyze code using the DeepSeek Coder model.
+        
+        Args:
+            request: CodeAnalysisRequest object containing all analysis parameters
+            
+        Returns:
+            Dict containing analysis results in the expected format
+        """
         if not self.model_loaded or self.model is None:
             logger.warning("Model not loaded, attempting to reload")
             self.load_model()
             if not self.model_loaded:
-                return self._generate_fallback_response("Model could not be loaded", code)
+                return self._generate_fallback_response("Model could not be loaded", request.code)
         
         try:
+            logger.info(f"🤖 Starting AI analysis for {request.language} code, analysis type: {request.analysis_type}")
+            
+            # Extract parameters from request
+            code = request.code
+            language = request.language
+            analysis_type = request.analysis_type
+            
             # Prepare the prompt for the model
             prompt = self._create_analysis_prompt(code, language.value, analysis_type.value)
             
@@ -86,11 +98,41 @@ class AICodeAnalyzer:
             logger.info(f"Generated response length: {len(generated_text)}")
             
             # Parse the JSON response
-            return self._parse_ai_response(generated_text, language, analysis_type, code)
+            analysis_result = self._parse_ai_response(generated_text, language, analysis_type, code)
+            
+            logger.info(f"✅ AI analysis completed successfully")
+            return analysis_result
             
         except Exception as e:
-            logger.error(f"Error during code analysis: {str(e)}")
-            return self._generate_fallback_response(f"Analysis failed: {str(e)}", code)
+            logger.error(f"❌ Error during code analysis: {str(e)}")
+            return self._generate_fallback_response(f"Analysis failed: {str(e)}", request.code)
+    
+    # Legacy method for backward compatibility (if needed)
+    def analyze_code_legacy(self, 
+                           code: str, 
+                           language: SupportedLanguage, 
+                           analysis_type: AnalysisType = AnalysisType.FULL) -> Dict[str, Any]:
+        """Legacy method for backward compatibility."""
+        from app.models.requests import CodeAnalysisRequest
+        
+        # Create a request object
+        request = CodeAnalysisRequest(
+            code=code,
+            language=language,
+            analysis_type=analysis_type,
+            include_suggestions=True,
+            include_explanations=True,
+            severity_threshold="low"
+        )
+        
+        # Call the main async method (note: this is not truly async in legacy mode)
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(self.analyze_code(request))
+        except RuntimeError:
+            # If no event loop is running, create a new one
+            return asyncio.run(self.analyze_code(request))
     
     def _create_analysis_prompt(self, code: str, language: str, analysis_type: str) -> str:
         """Create a prompt for the DeepSeek Coder model."""
