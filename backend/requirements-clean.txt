@@ -1,0 +1,60 @@
+# FastAPI and ASGI server
+fastapi==0.115.0
+uvicorn[standard]==0.32.1
+
+# Data validation and serialization
+pydantic==2.3.0
+pydantic-settings>=2.1.0
+pydantic-core==2.6.0 
+
+# HTTP client and file handling
+python-multipart==0.0.12
+httpx>=0.25.2
+
+# Environment variables
+python-dotenv==1.0.1
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+
+# Code quality and formatting
+black>=24.0.0
+flake8==7.1.1
+isort==5.13.2
+
+# Type checking
+mypy>=1.13.0
+
+# Security
+cryptography>=43.0.0
+
+# Logging
+python-json-logger==2.0.7
+
+# Development utilities
+watchdog==6.0.0
+
+# AI integration for DeepSeek Coder model
+llama-cpp-python==0.3.2
+
+# Static analysis tools
+pylint==3.3.1
+pylint-pydantic==0.3.2
+bandit>=1.7.5
+pre-commit==4.0.1
+
+# WebSocket support
+python-socketio==5.8.0
+python-socketio[asyncio]==5.8.0
+websockets>=13.0
+
+# Caching and background processing
+redis>=5.0.0
+celery>=5.4.0
+
+# Async file operations
+aiofiles>=24.1.0
+
+# System monitoring
+psutil>=5.9.0

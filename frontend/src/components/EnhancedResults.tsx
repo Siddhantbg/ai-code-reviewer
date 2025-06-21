@@ -143,7 +143,7 @@ function IssueCard({ issue }: { issue: CodeIssue }) {
             </div>
           </div>
           <div className="text-xs text-muted-foreground">
-            {Math.round(issue.confidence * 100)}% confidence
+            {Math.round((issue.confidence || 0) * 100)}% confidence
           </div>
         </div>
       </CardHeader>
@@ -189,12 +189,17 @@ function SeverityDistributionChart({ issues }: { issues: CodeIssue[] }) {
       low: 0,
     }
     
-    issues.forEach(issue => {
-      const severity = issue.severity.toLowerCase() as keyof typeof counts
-      if (counts[severity] !== undefined) {
-        counts[severity]++
-      }
-    })
+    // Ensure issues is an array and has valid items
+    if (Array.isArray(issues)) {
+      issues.forEach(issue => {
+        if (issue && issue.severity && typeof issue.severity === 'string') {
+          const severity = issue.severity.toLowerCase() as keyof typeof counts
+          if (counts[severity] !== undefined) {
+            counts[severity]++
+          }
+        }
+      })
+    }
     
     return [
       { name: 'Critical', value: counts.critical, color: '#b91c1c' },
@@ -234,10 +239,15 @@ function IssueTypeChart({ issues }: { issues: CodeIssue[] }) {
   const data = useMemo(() => {
     const typeCounts: Record<string, number> = {}
     
-    issues.forEach(issue => {
-      const type = issue.type.toLowerCase()
-      typeCounts[type] = (typeCounts[type] || 0) + 1
-    })
+    // Ensure issues is an array and has valid items
+    if (Array.isArray(issues)) {
+      issues.forEach(issue => {
+        if (issue && issue.type && typeof issue.type === 'string') {
+          const type = issue.type.toLowerCase()
+          typeCounts[type] = (typeCounts[type] || 0) + 1
+        }
+      })
+    }
     
     return Object.entries(typeCounts).map(([type, count]) => ({
       name: type.charAt(0).toUpperCase() + type.slice(1),
@@ -267,7 +277,48 @@ function IssueTypeChart({ issues }: { issues: CodeIssue[] }) {
 }
 
 export default function EnhancedResults({ analysis, onExport }: EnhancedResultsProps) {
-  const { summary, metrics, issues, suggestions, processing_time_ms } = analysis
+  // Safe destructuring with defaults to handle incomplete data
+  const {
+    summary = {
+      total_issues: 0,
+      critical_issues: 0,
+      high_issues: 0,
+      medium_issues: 0,
+      low_issues: 0,
+      overall_score: 0,
+      recommendation: 'No analysis available'
+    },
+    metrics = {
+      lines_of_code: 0,
+      complexity_score: 0,
+      maintainability_index: 0,
+      test_coverage: null,
+      duplication_percentage: 0
+    },
+    issues = [],
+    suggestions = [],
+    processing_time_ms = 0
+  } = analysis || {}
+  
+  // Ensure processing_time_ms is a valid number
+  const safeProcessingTime = typeof processing_time_ms === 'number' && !isNaN(processing_time_ms) ? processing_time_ms : 0
+  
+  // Early return if analysis is completely missing
+  if (!analysis) {
+    return (
+      <Card>
+        <CardContent className="p-8">
+          <div className="text-center">
+            <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-yellow-500" />
+            <h3 className="text-lg font-medium mb-2">No Analysis Data</h3>
+            <p className="text-sm text-gray-500">
+              Analysis data is not available. Please try running the analysis again.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
   
   // State for active tab
   const [activeTab, setActiveTab] = useState<string>('all')
@@ -300,7 +351,7 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
         issues: eslintIssues,
         metrics: {
           issueCount: eslintIssues.length,
-          processingTime: processing_time_ms * 0.4,
+          processingTime: safeProcessingTime * 0.4,
           rulesChecked: 120,
         }
       },
@@ -309,7 +360,7 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
         issues: pylintIssues,
         metrics: {
           issueCount: pylintIssues.length,
-          processingTime: processing_time_ms * 0.3,
+          processingTime: safeProcessingTime * 0.3,
           rulesChecked: 95,
         }
       },
@@ -318,16 +369,17 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
         issues: banditIssues,
         metrics: {
           issueCount: banditIssues.length,
-          processingTime: processing_time_ms * 0.3,
+          processingTime: safeProcessingTime * 0.3,
           rulesChecked: 42,
         }
       },
     ]
-  }, [issues, processing_time_ms])
+  }, [issues, safeProcessingTime])
   
   // Filter issues based on active tab and severity filter
   const filteredIssues = useMemo(() => {
-    let filtered = issues
+    // Ensure issues is an array
+    let filtered = Array.isArray(issues) ? issues : []
     
     // Filter by tool
     if (activeTab !== 'all') {
@@ -340,7 +392,10 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
     }
     
     // Filter by severity
-    filtered = filtered.filter(issue => severityFilter.includes(issue.severity.toLowerCase()))
+    filtered = filtered.filter(issue => 
+      issue && issue.severity && typeof issue.severity === 'string' && 
+      severityFilter.includes(issue.severity.toLowerCase())
+    )
     
     return filtered
   }, [issues, activeTab, severityFilter, toolResults])
@@ -377,7 +432,7 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
         <div>
           <h2 className="text-2xl font-bold">Analysis Results</h2>
           <p className="text-muted-foreground">
-            Analysis completed in {processing_time_ms.toFixed(1)}ms
+            Analysis completed in {safeProcessingTime.toFixed(1)}ms
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -403,15 +458,15 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Overall Score</p>
-                <p className={`text-2xl font-bold ${getScoreColor(summary.overall_score)}`}>
-                  {summary.overall_score.toFixed(1)}/10
+                <p className={`text-2xl font-bold ${getScoreColor(summary?.overall_score || 0)}`}>
+                  {(summary?.overall_score || 0).toFixed(1)}/10
                 </p>
               </div>
-              <div className={`p-2 rounded-full ${getScoreBackground(summary.overall_score)}`}>
-                {summary.overall_score >= 7 ? (
-                  <CheckCircle className={`h-6 w-6 ${getScoreColor(summary.overall_score)}`} />
+              <div className={`p-2 rounded-full ${getScoreBackground(summary?.overall_score || 0)}`}>
+                {(summary?.overall_score || 0) >= 7 ? (
+                  <CheckCircle className={`h-6 w-6 ${getScoreColor(summary?.overall_score || 0)}`} />
                 ) : (
-                  <AlertTriangle className={`h-6 w-6 ${getScoreColor(summary.overall_score)}`} />
+                  <AlertTriangle className={`h-6 w-6 ${getScoreColor(summary?.overall_score || 0)}`} />
                 )}
               </div>
             </div>
@@ -423,7 +478,7 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Total Issues</p>
-                <p className="text-2xl font-bold">{summary.total_issues}</p>
+                <p className="text-2xl font-bold">{summary?.total_issues || 0}</p>
               </div>
               <div className="p-2 rounded-full bg-blue-100">
                 <AlertCircle className="h-6 w-6 text-blue-600" />
@@ -437,7 +492,7 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Lines of Code</p>
-                <p className="text-2xl font-bold">{metrics.lines_of_code}</p>
+                <p className="text-2xl font-bold">{metrics?.lines_of_code || 0}</p>
               </div>
               <div className="p-2 rounded-full bg-green-100">
                 <FileText className="h-6 w-6 text-green-600" />
@@ -451,7 +506,7 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Processing Time</p>
-                <p className="text-2xl font-bold">{(processing_time_ms / 1000).toFixed(2)}s</p>
+                <p className="text-2xl font-bold">{(safeProcessingTime / 1000).toFixed(2)}s</p>
               </div>
               <div className="p-2 rounded-full bg-purple-100">
                 <Clock className="h-6 w-6 text-purple-600" />
@@ -533,15 +588,15 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <div className="text-sm font-medium text-muted-foreground">Issues Found</div>
-                <div className="text-xl font-semibold">{Math.round(activeToolResult.metrics.issueCount)}</div>
+                <div className="text-xl font-semibold">{Math.round(activeToolResult?.metrics?.issueCount || 0)}</div>
               </div>
               <div>
                 <div className="text-sm font-medium text-muted-foreground">Processing Time</div>
-                <div className="text-xl font-semibold">{(activeToolResult.metrics.processingTime / 1000).toFixed(2)}s</div>
+                <div className="text-xl font-semibold">{((activeToolResult?.metrics?.processingTime || 0) / 1000).toFixed(2)}s</div>
               </div>
               <div>
                 <div className="text-sm font-medium text-muted-foreground">Rules Checked</div>
-                <div className="text-xl font-semibold">{activeToolResult.metrics.rulesChecked}</div>
+                <div className="text-xl font-semibold">{activeToolResult?.metrics?.rulesChecked || 0}</div>
               </div>
             </div>
           </CardContent>
@@ -570,7 +625,7 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
       </div>
 
       {/* Issues List */}
-      {filteredIssues.length > 0 ? (
+      {Array.isArray(filteredIssues) && filteredIssues.length > 0 ? (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -601,7 +656,7 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
       )}
 
       {/* Suggestions */}
-      {suggestions.length > 0 && (
+      {Array.isArray(suggestions) && suggestions.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -612,10 +667,12 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
           <CardContent>
             <ul className="space-y-2">
               {suggestions.map((suggestion, index) => (
-                <li key={index} className="flex items-start gap-2">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0" />
-                  <span className="text-sm text-gray-700">{suggestion}</span>
-                </li>
+                suggestion && typeof suggestion === 'string' ? (
+                  <li key={index} className="flex items-start gap-2">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0" />
+                    <span className="text-sm text-gray-700">{suggestion}</span>
+                  </li>
+                ) : null
               ))}
             </ul>
           </CardContent>
@@ -633,18 +690,18 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div>
-              <span className="font-medium">Analysis ID:</span> {analysis.analysis_id}
+              <span className="font-medium">Analysis ID:</span> {analysis?.analysis_id || 'N/A'}
             </div>
             <div>
-              <span className="font-medium">Language:</span> {analysis.language}
+              <span className="font-medium">Language:</span> {analysis?.language || 'Unknown'}
             </div>
             <div>
-              <span className="font-medium">Timestamp:</span> {new Date(analysis.timestamp).toLocaleString()}
+              <span className="font-medium">Timestamp:</span> {analysis?.timestamp ? new Date(analysis.timestamp).toLocaleString() : 'N/A'}
             </div>
             <div>
-              <span className="font-medium">Processing Time:</span> {processing_time_ms.toFixed(1)}ms
+              <span className="font-medium">Processing Time:</span> {safeProcessingTime.toFixed(1)}ms
             </div>
-            {analysis.filename && (
+            {analysis?.filename && (
               <div>
                 <span className="font-medium">Filename:</span> {analysis.filename}
               </div>

@@ -3,6 +3,8 @@ import os
 import json
 from pathlib import Path
 import logging
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from llama_cpp import Llama
 
 from app.models.requests import SupportedLanguage, AnalysisType, CodeAnalysisRequest
@@ -34,10 +36,13 @@ class AICodeAnalyzer:
     def __init__(self):
         self.model = None
         self.model_loaded = False
-        self.load_model()
+        # Model will be loaded lazily when needed
     
-    def load_model(self) -> None:
-        """Load the DeepSeek Coder model."""
+    async def load_model(self) -> None:
+        """Load the DeepSeek Coder model asynchronously."""
+        if self.model_loaded:
+            return
+            
         try:
             model_path = Path(MODEL_PATH).resolve()
             if not model_path.exists():
@@ -45,17 +50,39 @@ class AICodeAnalyzer:
                 return
             
             logger.info(f"Loading DeepSeek Coder model from {model_path}")
-            self.model = Llama(
-                model_path=str(model_path),
+            
+            # Load model in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                self.model = await loop.run_in_executor(
+                    executor,
+                    self._load_model_sync,
+                    str(model_path)
+                )
+            
+            if self.model is not None:
+                self.model_loaded = True
+                logger.info("DeepSeek Coder model loaded successfully")
+            else:
+                logger.error("Failed to load model")
+                self.model_loaded = False
+                
+        except Exception as e:
+            logger.error(f"Failed to load DeepSeek Coder model: {str(e)}")
+            self.model_loaded = False
+    
+    def _load_model_sync(self, model_path: str) -> Optional[Llama]:
+        """Synchronous model loading for thread executor."""
+        try:
+            return Llama(
+                model_path=model_path,
                 n_ctx=CONTEXT_SIZE,
                 n_threads=CPU_THREADS,
                 verbose=False
             )
-            self.model_loaded = True
-            logger.info("DeepSeek Coder model loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load DeepSeek Coder model: {str(e)}")
-            self.model_loaded = False
+            logger.error(f"Error in sync model loading: {e}")
+            return None
     
     async def analyze_code(self, request: CodeAnalysisRequest) -> Dict[str, Any]:
         """
@@ -69,7 +96,7 @@ class AICodeAnalyzer:
         """
         if not self.model_loaded or self.model is None:
             logger.warning("Model not loaded, attempting to reload")
-            self.load_model()
+            await self.load_model()
             if not self.model_loaded:
                 return self._generate_fallback_response("Model could not be loaded", request.code)
         
@@ -84,14 +111,14 @@ class AICodeAnalyzer:
             # Prepare the prompt for the model
             prompt = self._create_analysis_prompt(code, language.value, analysis_type.value)
             
-            # Generate response from the model
-            response = self.model.create_completion(
-                prompt=prompt,
-                max_tokens=MAX_TOKENS,
-                temperature=TEMPERATURE,
-                stop=["</s>", "<|im_end|>"],
-                echo=False
-            )
+            # Generate response from the model asynchronously
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                response = await loop.run_in_executor(
+                    executor,
+                    self._generate_completion_sync,
+                    prompt
+                )
             
             # Extract and parse the generated text
             generated_text = response["choices"][0]["text"]
@@ -108,11 +135,11 @@ class AICodeAnalyzer:
             return self._generate_fallback_response(f"Analysis failed: {str(e)}", request.code)
     
     # Legacy method for backward compatibility (if needed)
-    def analyze_code_legacy(self, 
-                           code: str, 
-                           language: SupportedLanguage, 
-                           analysis_type: AnalysisType = AnalysisType.FULL) -> Dict[str, Any]:
-        """Legacy method for backward compatibility."""
+    async def analyze_code_legacy(self, 
+                                 code: str, 
+                                 language: SupportedLanguage, 
+                                 analysis_type: AnalysisType = AnalysisType.FULL) -> Dict[str, Any]:
+        """Legacy method for backward compatibility - now properly async."""
         from app.models.requests import CodeAnalysisRequest
         
         # Create a request object
@@ -125,14 +152,8 @@ class AICodeAnalyzer:
             severity_threshold="low"
         )
         
-        # Call the main async method (note: this is not truly async in legacy mode)
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            return loop.run_until_complete(self.analyze_code(request))
-        except RuntimeError:
-            # If no event loop is running, create a new one
-            return asyncio.run(self.analyze_code(request))
+        # Call the main async method
+        return await self.analyze_code(request)
     
     def _create_analysis_prompt(self, code: str, language: str, analysis_type: str) -> str:
         """Create a prompt for the DeepSeek Coder model."""
@@ -326,6 +347,20 @@ class AICodeAnalyzer:
             validated["score"] = 5
             
         return validated
+    
+    def _generate_completion_sync(self, prompt: str) -> Dict[str, Any]:
+        """Synchronous completion generation for thread executor."""
+        try:
+            return self.model.create_completion(
+                prompt=prompt,
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                stop=["</s>", "<|im_end|>"],
+                echo=False
+            )
+        except Exception as e:
+            logger.error(f"Error in sync completion generation: {e}")
+            return {"choices": [{"text": f"Error: {str(e)}"}]}
     
     def _convert_to_analyzer_format(self, 
                                    ai_data: Dict[str, Any], 

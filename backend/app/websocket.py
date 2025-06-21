@@ -13,12 +13,14 @@ logger = logging.getLogger(__name__)
 # Create Socket.IO server
 sio = socketio.AsyncServer(
     cors_allowed_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    ping_timeout=60,
-    ping_interval=25,
-    max_http_buffer_size=10**6,
+    ping_timeout=120,  # Increased from 60 to 120 seconds
+    ping_interval=60,  # Increased from 25 to 60 seconds
+    max_http_buffer_size=10**7,  # Increased buffer size
     async_mode='asgi',
     logger=True,
-    engineio_logger=True
+    engineio_logger=True,
+    allow_upgrades=True,
+    transports=['websocket', 'polling']  # Explicit transport support
 )
 
 # Store active analysis sessions

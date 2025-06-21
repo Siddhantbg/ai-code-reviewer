@@ -85,7 +85,20 @@ class CodeAnalyzerService:
         try:
             # Use AI model for code analysis
             logger.info(f"Analyzing code with AI model: {language.value}, analysis type: {analysis_type.value}")
-            ai_result = ai_analyzer.analyze_code(code, language, analysis_type)
+            
+            # Create a proper request object for the AI analyzer
+            from app.models.requests import CodeAnalysisRequest
+            request = CodeAnalysisRequest(
+                code=code,
+                language=language,
+                filename=filename,
+                analysis_type=analysis_type,
+                include_suggestions=include_suggestions,
+                include_explanations=include_explanations,
+                severity_threshold=severity_threshold or "low"
+            )
+            
+            ai_result = await ai_analyzer.analyze_code(request)
             
             # If AI analysis succeeded, return the result
             if ai_result and "issues" in ai_result:
