@@ -76,6 +76,9 @@ export default function HomePage() {
   const [useEnhancedResults, setUseEnhancedResults] = useState(true)
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [showLoader, setShowLoader] = useState(true)
+  
+  // Console log to track showLoader state changes
+  console.log('🔄 showLoader initial state:', true)
   const [showMainContent, setShowMainContent] = useState(false)
   const { toast: toastHook } = useToast()
   
@@ -140,9 +143,17 @@ export default function HomePage() {
     return () => clearInterval(interval)
   }, [])
   
-  const handleLoaderComplete = () => {
+  // Track showLoader state changes with useEffect
+  useEffect(() => {
+    console.log('🔄 showLoader state changed via useEffect:', showLoader)
+  }, [showLoader])
+  
+  const handleLoaderComplete = useCallback(() => {
+    console.log('🔄 handleLoaderComplete called - changing showLoader from true to false')
     setShowLoader(false)
+    console.log('🔄 showLoader state changed to:', false)
     setShowMainContent(true)
+    console.log('🔄 showMainContent state changed to:', true)
     
     // Fade in main content with ref check
     if (containerRef.current) {
@@ -156,7 +167,9 @@ export default function HomePage() {
     setTimeout(() => {
       initializeMainAnimations()
     }, 100)
-  }
+  }, []) // Empty dependency array since this should only be called once
+  
+  console.log('🔄 handleLoaderComplete function created/memoized with useCallback')
 
   const initializeMainAnimations = () => {
     // Hero entrance animation
@@ -518,8 +531,11 @@ export default function HomePage() {
   }, [])
 
   if (showLoader) {
+    console.log('🔄 Rendering EpicLoader - showLoader is:', showLoader)
     return <EpicLoader onComplete={handleLoaderComplete} />
   }
+  
+  console.log('🔄 Rendering main content - showLoader is:', showLoader)
 
   return (
     <div ref={containerRef} className={`main-app min-h-screen ${isDarkMode ? 'dark' : ''}`}>

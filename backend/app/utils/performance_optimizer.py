@@ -14,11 +14,11 @@ class PerformanceOptimizer:
     """Performance optimization utilities for the backend"""
     
     def __init__(self):
-        # Resource limits - reduced for better performance
-        self.max_concurrent_analyses = 3  # Reduced from 5
-        self.max_concurrent_ai_operations = 1  # Reduced from 2 to prevent CPU spikes
-        self.max_memory_usage_mb = 1536  # Reduced from 2048MB to 1.5GB
-        self.max_cpu_usage_percent = 80.0  # Reduced from 90% to 80%
+        # Resource limits - increased for better performance
+        self.max_concurrent_analyses = 5  # Increased back to 5
+        self.max_concurrent_ai_operations = 2  # Increased back to 2 for parallel processing
+        self.max_memory_usage_mb = 2048  # Increased back to 2GB
+        self.max_cpu_usage_percent = 90.0  # Increased back to 90%
         
         # Semaphores for limiting concurrent operations
         self.analysis_semaphore = asyncio.Semaphore(self.max_concurrent_analyses)
@@ -107,8 +107,8 @@ class PerformanceOptimizer:
                 await self.emergency_cleanup()
                 return False
                 
-            # Check CPU usage
-            cpu_percent = process.cpu_percent(interval=0.1)
+            # Check CPU usage with reduced interval for better performance
+            cpu_percent = process.cpu_percent(interval=0.01)  # Reduced from 0.1s to 0.01s
             if cpu_percent > self.max_cpu_usage_percent:
                 logger.warning(f"⚠️ CPU usage {cpu_percent:.1f}% exceeds limit {self.max_cpu_usage_percent}%")
                 return False

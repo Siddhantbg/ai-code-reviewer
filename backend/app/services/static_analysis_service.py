@@ -34,6 +34,9 @@ class StaticAnalysisOrchestrator:
             SupportedLanguage.TYPESCRIPT: [ESLintAnalyzer()],
             SupportedLanguage.PYTHON: [PylintAnalyzer(), BanditAnalyzer()],
         }
+        # Rate limiting for static analysis tools
+        self.analysis_semaphore = asyncio.Semaphore(3)  # Max 3 concurrent analyses
+        self.subprocess_semaphore = asyncio.Semaphore(2)  # Max 2 concurrent subprocesses
     
     async def analyze_code(self, code: str, language: str, rules_config: Optional[Dict] = None) -> Dict[str, Any]:
         """Run static analysis on code using appropriate tools for the language."""
@@ -74,14 +77,17 @@ class StaticAnalysisOrchestrator:
             return self._generate_error_result(str(e), language)
     
     async def _run_parallel_analysis(self, analyzers: List, code: str, rules_config: Optional[Dict] = None) -> List[Dict]:
-        """Run multiple analyzers in parallel using asyncio."""
-        tasks = []
-        for analyzer in analyzers:
-            config = rules_config.get(analyzer.tool_id, {}) if rules_config else {}
-            tasks.append(analyzer.analyze(code, config))
-        
-        # Run all analysis tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        """Run multiple analyzers in parallel using asyncio with rate limiting."""
+        async with self.analysis_semaphore:
+            tasks = []
+            for analyzer in analyzers:
+                config = rules_config.get(analyzer.tool_id, {}) if rules_config else {}
+                # Wrap each analyzer task with subprocess rate limiting
+                task = self._run_analyzer_with_rate_limit(analyzer, code, config)
+                tasks.append(task)
+            
+            # Run all analysis tasks concurrently
+            results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Filter out exceptions and log them
         filtered_results = []
@@ -92,6 +98,21 @@ class StaticAnalysisOrchestrator:
                 filtered_results.append(result)
         
         return filtered_results
+    
+    async def _run_analyzer_with_rate_limit(self, analyzer, code: str, config: Dict) -> Dict[str, Any]:
+        """Run a single analyzer with subprocess rate limiting."""
+        async with self.subprocess_semaphore:
+            try:
+                return await asyncio.wait_for(
+                    analyzer.analyze(code, config),
+                    timeout=60.0  # 1 minute timeout for each analyzer
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"Analyzer {analyzer.tool_id} timed out after 60 seconds")
+                return {"issues": [], "error": f"{analyzer.tool_id} analysis timed out"}
+            except Exception as e:
+                logger.error(f"Analyzer {analyzer.tool_id} failed: {str(e)}")
+                return {"issues": [], "error": str(e)}
     
     def _merge_results(self, results: List[Dict]) -> Dict[str, Any]:
         """Merge results from multiple analyzers into a single result."""
@@ -148,8 +169,9 @@ class StaticAnalysisOrchestrator:
                 result_metrics.get("lines_of_code", 0)
             )
             
-            # Collect suggestions
-            merged["suggestions"].extend(result.get("suggestions", []))
+            # Collect suggestions with smart filtering
+            suggestions = result.get("suggestions", [])
+            merged["suggestions"].extend(suggestions)
         
         # Average the metrics that were summed
         if results:
@@ -173,19 +195,27 @@ class StaticAnalysisOrchestrator:
         merged["summary"]["medium_issues"] = sum(1 for i in all_issues if i.severity == IssueSeverity.MEDIUM)
         merged["summary"]["low_issues"] = sum(1 for i in all_issues if i.severity == IssueSeverity.LOW)
         
-        # Calculate overall score (1-10 scale, lower with more severe issues)
+        # Calculate overall score (1-10 scale, more reasonable weighting)
         issue_weights = {
-            IssueSeverity.CRITICAL: 2.5,
-            IssueSeverity.HIGH: 1.5,
-            IssueSeverity.MEDIUM: 0.8,
-            IssueSeverity.LOW: 0.3
+            IssueSeverity.CRITICAL: 2.0,  # Reduced from 2.5
+            IssueSeverity.HIGH: 1.0,      # Reduced from 1.5
+            IssueSeverity.MEDIUM: 0.4,    # Reduced from 0.8
+            IssueSeverity.LOW: 0.1        # Reduced from 0.3
         }
         
         weighted_issues = sum(issue_weights.get(i.severity, 0) for i in all_issues)
         base_score = 10
-        score_reduction = min(weighted_issues, 9)  # Cap reduction at 9 to ensure score >= 1
-        overall_score = base_score - score_reduction
-        merged["summary"]["overall_score"] = max(1, min(10, overall_score))  # Ensure between 1-10
+        
+        # More gradual score reduction with better minimum scores
+        if weighted_issues == 0:
+            overall_score = 8  # Clean code gets 8/10 instead of 10/10
+        elif weighted_issues <= 1:
+            overall_score = 7  # Minor issues get 7/10
+        else:
+            score_reduction = min(weighted_issues * 0.8, 6)  # Cap reduction at 6 to ensure score >= 4
+            overall_score = base_score - score_reduction
+            
+        merged["summary"]["overall_score"] = max(4, min(10, overall_score))  # Minimum score of 4 for working code
         
         # Set quality level based on score
         if merged["summary"]["overall_score"] >= 9:
@@ -224,6 +254,28 @@ class StaticAnalysisOrchestrator:
         else:
             merged["summary"]["recommendation"] = "Code looks good! No significant issues detected."
         
+        # Apply smart filtering to suggestions based on code complexity
+        code_lines = len(code.split('\n'))
+        is_simple_code = code_lines <= 10
+        
+        if is_simple_code:
+            # For simple code, prioritize actionable suggestions and limit to 3
+            priority_keywords = ['JSDoc', 'documentation', 'input validation', 'error handling', 'parameter']
+            actionable_suggestions = []
+            generic_suggestions = []
+            
+            for suggestion in merged["suggestions"]:
+                if any(keyword.lower() in suggestion.lower() for keyword in priority_keywords):
+                    actionable_suggestions.append(suggestion)
+                else:
+                    generic_suggestions.append(suggestion)
+            
+            # Prioritize actionable over generic for simple code
+            merged["suggestions"] = (actionable_suggestions[:3] + generic_suggestions[:0]) if actionable_suggestions else merged["suggestions"][:2]
+        else:
+            # For complex code, allow more suggestions but still limit them
+            merged["suggestions"] = merged["suggestions"][:5]
+        
         return merged
     
     def _generate_cache_key(self, code: str, language: str, rules_config: Optional[Dict] = None) -> str:
@@ -256,7 +308,7 @@ class StaticAnalysisOrchestrator:
                 performance_count=0,
                 style_count=0,
                 lines_of_code=0
-            ).dict(),
+            ).model_dump(),
             "summary": AnalysisSummary(
                 overall_score=0,
                 quality_level="Unknown",
@@ -269,7 +321,7 @@ class StaticAnalysisOrchestrator:
                 medium_issues=0,
                 low_issues=0,
                 recommendation="Consider using a supported language for static analysis."
-            ).dict(),
+            ).model_dump(),
             "suggestions": []
         }
     
@@ -283,7 +335,7 @@ class StaticAnalysisOrchestrator:
                 title="Static Analysis Error",
                 description=f"Error during static analysis: {error_message}",
                 suggestion="Check the code format and try again."
-            ).dict()],
+            ).model_dump()],
             "metrics": CodeMetrics(
                 complexity_score=0,
                 maintainability_index=0,
@@ -293,7 +345,7 @@ class StaticAnalysisOrchestrator:
                 performance_count=0,
                 style_count=0,
                 lines_of_code=0
-            ).dict(),
+            ).model_dump(),
             "summary": AnalysisSummary(
                 overall_score=0,
                 quality_level="Unknown",
@@ -306,7 +358,7 @@ class StaticAnalysisOrchestrator:
                 medium_issues=0,
                 low_issues=1,
                 recommendation="Check the code format and try again."
-            ).dict(),
+            ).model_dump(),
             "suggestions": ["Ensure the code is valid and properly formatted."]
         }
 
@@ -390,8 +442,8 @@ class ESLintAnalyzer(BaseAnalyzer):
                 stderr=asyncio.subprocess.PIPE
             )
             
-            # Get output with timeout
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+            # Get output with reduced timeout for better performance
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
             
             # Clean up config file if created
             if config_path and os.path.exists(config_path):
@@ -456,12 +508,39 @@ class ESLintAnalyzer(BaseAnalyzer):
         # Initialize issues list
         issues = []
         
-        # Map ESLint severities to our severities
-        severity_map = {
-            2: IssueSeverity.HIGH,    # ESLint error
-            1: IssueSeverity.MEDIUM,  # ESLint warning
-            0: IssueSeverity.LOW      # ESLint info
-        }
+        # Smart severity mapping based on rule type and impact
+        def get_eslint_severity(rule_id, eslint_severity):
+            # CRITICAL: Code that can break functionality
+            critical_rules = ['no-undef', 'no-redeclare', 'no-dupe-keys', 'no-func-assign']
+            
+            # HIGH: Logic errors and security issues  
+            high_rules = ['no-eval', 'no-implied-eval', 'no-new-func', 'no-script-url',
+                         'eqeqeq', 'no-unreachable', 'no-constant-condition']
+            
+            # MEDIUM: Potential issues and important best practices
+            medium_rules = ['no-unused-vars', 'no-use-before-define', 'no-shadow',
+                           'prefer-const', 'no-var']
+            
+            # LOW: Style and formatting (most ESLint rules)
+            low_rules = ['no-console', 'quotes', 'semi', 'indent', 'comma-dangle',
+                        'space-before-function-paren', 'max-len', 'camelcase']
+            
+            if rule_id in critical_rules:
+                return IssueSeverity.CRITICAL
+            elif rule_id in high_rules:
+                return IssueSeverity.HIGH  
+            elif rule_id in medium_rules:
+                return IssueSeverity.MEDIUM
+            elif rule_id in low_rules:
+                return IssueSeverity.LOW
+            else:
+                # Default mapping for unknown rules
+                severity_map = {
+                    2: IssueSeverity.MEDIUM,  # ESLint error -> MEDIUM (was HIGH)
+                    1: IssueSeverity.LOW,     # ESLint warning -> LOW (was MEDIUM)
+                    0: IssueSeverity.LOW      # ESLint info -> LOW
+                }
+                return severity_map.get(eslint_severity, IssueSeverity.LOW)
         
         # Map ESLint rule categories to our issue types
         type_map = {
@@ -491,11 +570,11 @@ class ESLintAnalyzer(BaseAnalyzer):
                 elif "style" in rule_id.lower() or "format" in rule_id.lower():
                     issue_type = IssueType.STYLE
                 
-                # Create the issue
+                # Create the issue with proper severity classification
                 issue = CodeIssue(
                     id=f"eslint_{uuid.uuid4().hex[:8]}",
                     type=issue_type,
-                    severity=severity_map.get(message.get("severity", 1), IssueSeverity.MEDIUM),
+                    severity=get_eslint_severity(rule_id, message.get("severity", 1)),
                     title=f"ESLint: {rule_id}" if rule_id else "ESLint Issue",
                     description=message.get("message", "Unknown ESLint issue"),
                     line_number=message.get("line"),
@@ -503,13 +582,13 @@ class ESLintAnalyzer(BaseAnalyzer):
                     suggestion=f"Fix according to ESLint rule: {rule_id}" if rule_id else "Review code"
                 )
                 
-                issues.append(issue)
+                issues.append(issue.model_dump())
         
-        # Count issues by type
-        bug_count = sum(1 for i in issues if i.type == IssueType.BUG)
-        security_count = sum(1 for i in issues if i.type == IssueType.SECURITY)
-        performance_count = sum(1 for i in issues if i.type == IssueType.PERFORMANCE)
-        style_count = sum(1 for i in issues if i.type == IssueType.STYLE)
+        # Count issues by type (issues are now dictionaries)
+        bug_count = sum(1 for i in issues if i.get("type") == IssueType.BUG.value)
+        security_count = sum(1 for i in issues if i.get("type") == IssueType.SECURITY.value)
+        performance_count = sum(1 for i in issues if i.get("type") == IssueType.PERFORMANCE.value)
+        style_count = sum(1 for i in issues if i.get("type") == IssueType.STYLE.value)
         
         # Calculate metrics
         # More issues = higher complexity score (1-10 scale)
@@ -564,8 +643,8 @@ class ESLintAnalyzer(BaseAnalyzer):
         
         return {
             "issues": issues,
-            "metrics": metrics.dict(),
-            "summary": summary.dict(),
+            "metrics": metrics.model_dump(),
+            "summary": summary.model_dump(),
             "suggestions": suggestions
         }
     
@@ -605,7 +684,7 @@ class ESLintAnalyzer(BaseAnalyzer):
                 title="ESLint Analysis Error",
                 description=f"Error during ESLint analysis: {error_message}",
                 suggestion="Check that ESLint is properly installed and configured."
-            ).dict()],
+            ).model_dump()],
             "metrics": CodeMetrics(
                 complexity_score=0,
                 maintainability_index=0,
@@ -615,7 +694,7 @@ class ESLintAnalyzer(BaseAnalyzer):
                 performance_count=0,
                 style_count=0,
                 lines_of_code=0
-            ).dict(),
+            ).model_dump(),
             "summary": AnalysisSummary(
                 overall_score=0,
                 quality_level="Unknown",
@@ -628,7 +707,7 @@ class ESLintAnalyzer(BaseAnalyzer):
                 medium_issues=0,
                 low_issues=1,
                 recommendation="Ensure ESLint is properly installed and the code is valid."
-            ).dict(),
+            ).model_dump(),
             "suggestions": ["Check that ESLint is properly installed and configured."]
         }
 
@@ -681,8 +760,8 @@ class PylintAnalyzer(BaseAnalyzer):
                 stderr=asyncio.subprocess.PIPE
             )
             
-            # Get output with timeout
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+            # Get output with reduced timeout for better performance
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
             
             # Clean up config file if created
             if rcfile and os.path.exists(rcfile):
@@ -746,14 +825,42 @@ class PylintAnalyzer(BaseAnalyzer):
         # Initialize issues list
         issues = []
         
-        # Map Pylint message types to our severities
-        severity_map = {
-            "error": IssueSeverity.HIGH,
-            "warning": IssueSeverity.MEDIUM,
-            "convention": IssueSeverity.LOW,
-            "refactor": IssueSeverity.LOW,
-            "info": IssueSeverity.LOW
-        }
+        # Smart Pylint severity mapping based on actual impact
+        def get_pylint_severity(message_id, pylint_type):
+            # CRITICAL: Code that breaks functionality
+            critical_messages = ['undefined-variable', 'used-before-assignment', 'no-member', 
+                               'not-callable', 'invalid-name']
+            
+            # HIGH: Logic errors and serious issues
+            high_messages = ['unused-variable', 'redefined-builtin', 'dangerous-default-value',
+                           'unreachable', 'pointless-except', 'broad-except']
+            
+            # MEDIUM: Important maintainability issues
+            medium_messages = ['too-many-arguments', 'too-many-locals', 'too-many-branches',
+                             'cyclomatic-complexity', 'duplicate-code']
+            
+            # LOW: Style and conventions (most Pylint messages)
+            low_messages = ['missing-docstring', 'line-too-long', 'trailing-whitespace',
+                          'bad-indentation', 'wrong-import-order', 'invalid-name']
+            
+            if message_id in critical_messages:
+                return IssueSeverity.CRITICAL
+            elif message_id in high_messages:
+                return IssueSeverity.HIGH
+            elif message_id in medium_messages:
+                return IssueSeverity.MEDIUM  
+            elif message_id in low_messages:
+                return IssueSeverity.LOW
+            else:
+                # Default mapping for unknown messages - more conservative
+                severity_map = {
+                    "error": IssueSeverity.MEDIUM,      # Was HIGH, now MEDIUM
+                    "warning": IssueSeverity.LOW,       # Was MEDIUM, now LOW  
+                    "convention": IssueSeverity.LOW,
+                    "refactor": IssueSeverity.LOW,
+                    "info": IssueSeverity.LOW
+                }
+                return severity_map.get(pylint_type, IssueSeverity.LOW)
         
         # Map Pylint message types to our issue types
         type_map = {
@@ -768,11 +875,11 @@ class PylintAnalyzer(BaseAnalyzer):
         for message in pylint_result:
             msg_type = message.get("type", "warning")
             
-            # Create the issue
+            # Create the issue with proper severity classification
             issue = CodeIssue(
                 id=f"pylint_{uuid.uuid4().hex[:8]}",
                 type=type_map.get(msg_type, IssueType.MAINTAINABILITY),
-                severity=severity_map.get(msg_type, IssueSeverity.MEDIUM),
+                severity=get_pylint_severity(message.get('symbol', ''), msg_type),
                 title=f"Pylint: {message.get('symbol', 'issue')}",
                 description=message.get("message", "Unknown Pylint issue"),
                 line_number=message.get("line"),
@@ -780,13 +887,13 @@ class PylintAnalyzer(BaseAnalyzer):
                 suggestion=f"Fix according to Pylint rule: {message.get('symbol', 'unknown')}"
             )
             
-            issues.append(issue)
+            issues.append(issue.model_dump())
         
-        # Count issues by type
-        bug_count = sum(1 for i in issues if i.type == IssueType.BUG)
-        security_count = sum(1 for i in issues if i.type == IssueType.SECURITY)
-        performance_count = sum(1 for i in issues if i.type == IssueType.PERFORMANCE)
-        style_count = sum(1 for i in issues if i.type == IssueType.STYLE)
+        # Count issues by type (issues are now dictionaries)
+        bug_count = sum(1 for i in issues if i.get("type") == IssueType.BUG.value)
+        security_count = sum(1 for i in issues if i.get("type") == IssueType.SECURITY.value)
+        performance_count = sum(1 for i in issues if i.get("type") == IssueType.PERFORMANCE.value)
+        style_count = sum(1 for i in issues if i.get("type") == IssueType.STYLE.value)
         
         # Calculate metrics
         issue_count = len(issues)
@@ -850,8 +957,8 @@ class PylintAnalyzer(BaseAnalyzer):
         
         return {
             "issues": issues,
-            "metrics": metrics.dict(),
-            "summary": summary.dict(),
+            "metrics": metrics.model_dump(),
+            "summary": summary.model_dump(),
             "suggestions": suggestions
         }
     
@@ -891,7 +998,7 @@ class PylintAnalyzer(BaseAnalyzer):
                 title="Pylint Analysis Error",
                 description=f"Error during Pylint analysis: {error_message}",
                 suggestion="Check that Pylint is properly installed and configured."
-            ).dict()],
+            ).model_dump()],
             "metrics": CodeMetrics(
                 complexity_score=0,
                 maintainability_index=0,
@@ -901,7 +1008,7 @@ class PylintAnalyzer(BaseAnalyzer):
                 performance_count=0,
                 style_count=0,
                 lines_of_code=0
-            ).dict(),
+            ).model_dump(),
             "summary": AnalysisSummary(
                 overall_score=0,
                 quality_level="Unknown",
@@ -914,7 +1021,7 @@ class PylintAnalyzer(BaseAnalyzer):
                 medium_issues=0,
                 low_issues=1,
                 recommendation="Ensure Pylint is properly installed and the code is valid."
-            ).dict(),
+            ).model_dump(),
             "suggestions": ["Check that Pylint is properly installed and configured."]
         }
 
@@ -970,8 +1077,8 @@ class BanditAnalyzer(BaseAnalyzer):
                 stderr=asyncio.subprocess.PIPE
             )
             
-            # Get output with timeout
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+            # Get output with reduced timeout for better performance
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
             
             # Parse the JSON output
             if stdout:
@@ -1033,7 +1140,7 @@ class BanditAnalyzer(BaseAnalyzer):
                 suggestion="Fix this security vulnerability."
             )
             
-            issues.append(issue)
+            issues.append(issue.model_dump())
         
         # Calculate metrics
         issue_count = len(issues)
@@ -1084,8 +1191,8 @@ class BanditAnalyzer(BaseAnalyzer):
         
         return {
             "issues": issues,
-            "metrics": metrics.dict(),
-            "summary": summary.dict(),
+            "metrics": metrics.model_dump(),
+            "summary": summary.model_dump(),
             "suggestions": suggestions
         }
     
@@ -1125,7 +1232,7 @@ class BanditAnalyzer(BaseAnalyzer):
                 title="Bandit Analysis Error",
                 description=f"Error during Bandit security analysis: {error_message}",
                 suggestion="Check that Bandit is properly installed and configured."
-            ).dict()],
+            ).model_dump()],
             "metrics": CodeMetrics(
                 complexity_score=0,
                 maintainability_index=0,
@@ -1135,7 +1242,7 @@ class BanditAnalyzer(BaseAnalyzer):
                 performance_count=0,
                 style_count=0,
                 lines_of_code=0
-            ).dict(),
+            ).model_dump(),
             "summary": AnalysisSummary(
                 overall_score=0,
                 quality_level="Unknown",
@@ -1148,7 +1255,7 @@ class BanditAnalyzer(BaseAnalyzer):
                 medium_issues=0,
                 low_issues=1,
                 recommendation="Ensure Bandit is properly installed and the code is valid."
-            ).dict(),
+            ).model_dump(),
             "suggestions": ["Check that Bandit is properly installed and configured."]
         }
 

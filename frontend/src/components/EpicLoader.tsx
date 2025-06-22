@@ -1,5 +1,5 @@
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { gsap } from 'gsap';
 import { TextPlugin } from 'gsap/TextPlugin';
 import { Code } from 'lucide-react';
@@ -17,77 +17,130 @@ const EpicLoader: React.FC<EpicLoaderProps> = ({ onComplete }) => {
   const progressPercentRef = useRef<HTMLDivElement>(null);
   const loadingTextRef = useRef<HTMLDivElement>(null);
   const particlesRef = useRef<HTMLDivElement>(null);
+  const loaderContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Flag to prevent multiple timeline executions
+  const hasAnimated = useRef<boolean>(false);
+  
+  // Log when component mounts
+  console.log('🔄 EpicLoader: Component mounted/rendered');
 
   useEffect(() => {
-    const epicLoader = gsap.timeline({
-      onComplete: () => {
-        setTimeout(onComplete, 500);
-      }
-    });
+    // Prevent multiple timeline executions
+    if (hasAnimated.current) {
+      console.log('🔄 EpicLoader: Animation already executed, skipping');
+      return;
+    }
+    
+    console.log('🔄 EpicLoader: Starting GSAP timeline animation');
+    
+    // Ensure all refs are available before starting animation
+    if (!loaderRef.current || !logoRef.current || !progressFillRef.current || 
+        !progressPercentRef.current || !loadingTextRef.current || !particlesRef.current) {
+      console.warn('🔄 EpicLoader: Some refs are not available, skipping animation');
+      return;
+    }
+    
+    console.log('🔄 EpicLoader: All refs available, proceeding with animation');
+    
+    // Wrap all GSAP animations in hasAnimated check
+    if (!hasAnimated.current) {
+      const epicLoader = gsap.timeline({
+        onComplete: () => {
+          console.log('🔄 EpicLoader: GSAP timeline completed');
+          onComplete(); // Call directly without delay
+        }
+      });
 
-    // Stage 1: Logo reveal with morphing (1s)
-    epicLoader.from(logoRef.current, {
-      scale: 0,
-      rotation: 180,
-      opacity: 0,
-      duration: 1,
-      ease: "back.out(1.7)"
-    })
+      // Stage 1: Logo reveal with morphing (1s)
+      epicLoader.from(logoRef.current, {
+        scale: 0,
+        rotation: 180,
+        opacity: 0,
+        duration: 1,
+        ease: "back.out(1.7)"
+      })
 
-    // Stage 2: Progress bar with physics (2s) and percentage counter
-    .fromTo(progressFillRef.current, 
-      { width: "0%" },
-      { 
-        width: "100%", 
-        duration: 2, 
-        ease: "power2.out",
-        onUpdate: function() {
-          const progress = Math.round(this.progress() * 100);
-          if (progressPercentRef.current) {
-            progressPercentRef.current.textContent = `${progress}%`;
+      // Stage 2: Progress bar with physics (2s) and percentage counter
+      .fromTo(progressFillRef.current, 
+        { width: "0%" },
+        { 
+          width: "100%", 
+          duration: 2, 
+          ease: "power2.out",
+          onUpdate: function() {
+            const progress = Math.round(this.progress() * 100);
+            if (progressPercentRef.current) {
+              progressPercentRef.current.textContent = `${progress}%`;
+            }
           }
         }
-      }
-    )
+      )
 
-    // Loading text typewriter effect
-    .to(loadingTextRef.current, {
-      duration: 2,
-      text: "Initializing AI Analysis Engine...",
-      ease: "none"
-    }, "-=2")
+      // Loading text typewriter effect
+      .to(loadingTextRef.current, {
+        duration: 2,
+        text: "Initializing AI Analysis Engine...",
+        ease: "none"
+      }, "-=2")
 
-    // Stage 3: Particle explosion transition (1s)
-    .to(particlesRef.current?.children || [], {
-      scale: 3,
-      opacity: 0,
-      rotation: 360,
-      duration: 0.8,
-      ease: "power3.out",
-      stagger: 0.1
-    })
+      // Stage 3: Particle explosion transition (1s)
+      .to(particlesRef.current?.children ? Array.from(particlesRef.current.children) : [], {
+        scale: 3,
+        opacity: 0,
+        rotation: 360,
+        duration: 0.8,
+        ease: "power3.out",
+        stagger: 0.1
+      })
 
-    // Stage 4: Smooth transition to main content
-    .to(loaderRef.current, {
-      y: "-100vh",
-      duration: 1,
-      ease: "power3.inOut"
-    }, "-=0.3");
+      // Stage 4: Smooth transition to main content
+      .to(loaderRef.current, {
+        y: "-100vh",
+        duration: 1,
+        ease: "power3.inOut"
+      }, "-=0.3");
 
-    // Floating particles animation
-    gsap.to(particlesRef.current?.children || [], {
-      y: -20,
-      duration: 2,
-      repeat: -1,
-      yoyo: true,
-      ease: "power1.inOut",
-      stagger: 0.3
-    });
+      // Floating particles animation
+      gsap.to(particlesRef.current?.children ? Array.from(particlesRef.current.children) : [], {
+        y: -20,
+        duration: 2,
+        repeat: -1,
+        yoyo: true,
+        ease: "power1.inOut",
+        stagger: 0.3
+      });
 
-    return () => {
-      epicLoader.kill();
-    };
-  }, [onComplete]);
+      // Set flag after timeline creation to prevent re-execution
+      hasAnimated.current = true;
+      console.log('🔄 EpicLoader: hasAnimated flag set to true after timeline creation');
+
+      return () => {
+        console.log('🔄 EpicLoader: Cleaning up GSAP timeline');
+        epicLoader.kill();
+        
+        // Comprehensive GSAP cleanup with clearProps
+        const allTargets = [
+          logoRef.current,
+          progressFillRef.current,
+          progressPercentRef.current,
+          loadingTextRef.current,
+          loaderRef.current
+        ].filter(Boolean);
+        
+        // Add particles children to cleanup targets
+        if (particlesRef.current?.children) {
+          allTargets.push(...Array.from(particlesRef.current.children));
+        }
+        
+        gsap.set(allTargets, { clearProps: "all" });
+        
+        // Reset animation flag in case component gets remounted
+        hasAnimated.current = false;
+        console.log('🔄 EpicLoader: GSAP properties cleared and animation flag reset');
+      };
+    }
+  }, []); // Empty dependency array to prevent re-triggering animation
 
   return (
     <div 
@@ -110,7 +163,7 @@ const EpicLoader: React.FC<EpicLoaderProps> = ({ onComplete }) => {
         </div>
       </div>
 
-      <div className="loader-container text-center">
+      <div ref={loaderContainerRef} className="loader-container text-center">
         {/* App Logo */}
         <div ref={logoRef} className="mb-8">
           <div className="w-24 h-24 mx-auto bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center shadow-2xl">

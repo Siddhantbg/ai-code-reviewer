@@ -31,15 +31,15 @@ class CodeAnalyzerService:
                 "common_issues": [
                     (r"print\(", "Consider using logging instead of print statements", IssueType.STYLE, IssueSeverity.LOW),
                     (r"except:\s*$", "Avoid bare except clauses", IssueType.BUG, IssueSeverity.MEDIUM),
-                    (r"eval\(", "Avoid using eval() - security risk", IssueType.SECURITY, IssueSeverity.HIGH),
-                    (r"exec\(", "Avoid using exec() - security risk", IssueType.SECURITY, IssueSeverity.HIGH),
+                    (r"eval\(", "Avoid using eval() - CRITICAL security risk: arbitrary code execution", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"exec\(", "Avoid using exec() - CRITICAL security risk: arbitrary code execution", IssueType.SECURITY, IssueSeverity.CRITICAL),
                     (r"import \*", "Avoid wildcard imports", IssueType.STYLE, IssueSeverity.LOW),
                 ]
             },
             SupportedLanguage.JAVASCRIPT: {
                 "common_issues": [
                     # Security patterns
-                    (r"eval\(", "Avoid using eval() - serious security risk that can execute arbitrary code. Use JSON.parse() for data or Function constructor with caution.", IssueType.SECURITY, IssueSeverity.HIGH),
+                    (r"eval\(", "Avoid using eval() - CRITICAL security risk: arbitrary code execution. Use JSON.parse() for data or safer alternatives.", IssueType.SECURITY, IssueSeverity.CRITICAL),
                     (r"innerHTML\s*=.*\+", "Potential XSS vulnerability - user input in innerHTML. Use textContent, createElement, or sanitize input properly.", IssueType.SECURITY, IssueSeverity.HIGH),
                     (r"document\.write\(", "Avoid document.write() as it can introduce XSS vulnerabilities and affects performance. Use DOM manipulation instead.", IssueType.SECURITY, IssueSeverity.MEDIUM),
                     (r"location\.href\s*=.*\+", "Potential open redirect vulnerability. Validate URLs before redirecting.", IssueType.SECURITY, IssueSeverity.MEDIUM),
@@ -94,7 +94,7 @@ class CodeAnalyzerService:
                     (r"malloc\(", "Consider using smart pointers instead of malloc", IssueType.MAINTAINABILITY, IssueSeverity.MEDIUM),
                     (r"free\(", "Ensure proper memory management with free()", IssueType.BUG, IssueSeverity.HIGH),
                     (r"gets\(", "Avoid gets() - use fgets() instead", IssueType.SECURITY, IssueSeverity.CRITICAL),
-                    (r"strcpy\(", "Consider using strncpy() for safer string copying", IssueType.SECURITY, IssueSeverity.MEDIUM),
+                    (r"strcpy\(", "Avoid strcpy() - HIGH risk: buffer overflow vulnerability. Use strncpy() or safer alternatives.", IssueType.SECURITY, IssueSeverity.HIGH),
                 ]
             }
         }
@@ -283,10 +283,17 @@ class CodeAnalyzerService:
         medium_count = len([i for i in issues if i.severity == IssueSeverity.MEDIUM])
         low_count = len([i for i in issues if i.severity == IssueSeverity.LOW])
         
-        # Calculate overall score (0-10)
+        # Calculate overall score (0-10) with more reasonable penalties
         base_score = 10.0
-        score_deduction = (critical_count * 3) + (high_count * 2) + (medium_count * 1) + (low_count * 0.5)
-        overall_score = max(0, min(10, base_score - score_deduction))
+        score_deduction = (critical_count * 2) + (high_count * 1) + (medium_count * 0.4) + (low_count * 0.1)
+        
+        # More gradual scoring for clean code
+        if score_deduction == 0:
+            overall_score = 8.0  # Clean code gets 8/10
+        elif score_deduction <= 0.5:
+            overall_score = 7.5  # Minor issues get 7.5/10
+        else:
+            overall_score = max(4.0, min(10.0, base_score - score_deduction))  # Minimum 4.0 for working code
         
         # Generate recommendation
         if overall_score >= 8:
@@ -320,11 +327,16 @@ class CodeAnalyzerService:
                 "Follow PEP 8 style guidelines for consistent formatting"
             ])
         elif language == SupportedLanguage.JAVASCRIPT:
-            suggestions.extend([
-                "Consider using TypeScript for better type safety",
-                "Use ESLint and Prettier for consistent code formatting",
-                "Implement proper error handling with try-catch blocks"
-            ])
+            # Prioritize actionable suggestions based on code analysis
+            code_lines = len(code.split('\n'))
+            if "/**" not in code and "function" in code:
+                suggestions.append("Add JSDoc comments to document function parameters and return values")
+            if "try" not in code.lower() and ("fetch" in code or "async" in code):
+                suggestions.append("Implement proper error handling with try-catch blocks for async operations")
+            if code_lines > 20:
+                suggestions.append("Consider using TypeScript for better type safety in larger codebases")
+            if "eslint" not in code and code_lines > 10:
+                suggestions.append("Use ESLint and Prettier for consistent code formatting")
         elif language == SupportedLanguage.JAVA:
             suggestions.extend([
                 "Use meaningful variable and method names",
@@ -339,14 +351,24 @@ class CodeAnalyzerService:
         if any(issue.type == IssueType.PERFORMANCE for issue in issues):
             suggestions.append("Consider profiling your code to identify performance bottlenecks")
         
-        # General suggestions
-        suggestions.extend([
-            "Add comprehensive unit tests to improve code reliability",
-            "Use version control (Git) to track changes and collaborate effectively",
-            "Consider code reviews with team members before merging changes"
-        ])
+        # Smart general suggestions based on code complexity
+        code_lines = len(code.split('\n'))
         
-        return suggestions[:5]  # Limit to top 5 suggestions
+        if code_lines <= 10:
+            # For simple code, focus on immediate improvements
+            if "test" not in code.lower() and "function" in code:
+                suggestions.append("Add a simple unit test to verify function behavior")
+        else:
+            # For complex code, suggest more comprehensive improvements
+            suggestions.extend([
+                "Add comprehensive unit tests to improve code reliability",
+                "Use version control (Git) to track changes and collaborate effectively",
+                "Consider code reviews with team members before merging changes"
+            ])
+        
+        # Smart limiting: fewer suggestions for simple code
+        max_suggestions = 3 if code_lines <= 10 else 5
+        return suggestions[:max_suggestions]
     
     def _get_suggestion_for_issue(self, pattern: str, issue_type: IssueType) -> str:
         """Get specific suggestion for an issue pattern."""

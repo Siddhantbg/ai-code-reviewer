@@ -437,13 +437,8 @@ async def run_analysis_with_progress(
                 'stage': stage_key
             }, room=sid)
             
-            # Simulate processing time based on analysis type
-            if analysis_type == 'quick':
-                await asyncio.sleep(0.3)
-            elif analysis_type == 'comprehensive':
-                await asyncio.sleep(0.8)
-            else:  # custom
-                await asyncio.sleep(0.5)
+            # Remove artificial delays for better performance
+            # Processing time should be based on actual work, not artificial delays
             
             # Special handling for AI model loading with circuit breaker
             if stage_key == "model_loading":
@@ -609,6 +604,9 @@ async def run_analysis_with_progress(
             del active_analyses[analysis_id]
             # Update resource monitor
             resource_monitor.update_analysis_count(len(active_analyses))
+        
+        # Return the complete result for task.result() access
+        return complete_result
             
     except asyncio.CancelledError:
         logger.info(f"🛑 Analysis {analysis_id} was cancelled")

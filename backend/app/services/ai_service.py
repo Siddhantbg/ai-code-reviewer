@@ -41,41 +41,65 @@ class AICodeAnalyzer:
         self.model_loaded = False
         self.last_cleanup_time = 0
         self.cleanup_interval = 300  # 5 minutes
-        # Shared thread pool to avoid creating new ones
-        self.thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-model")
+        # Shared thread pool with increased workers for better performance
+        self.thread_pool = ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 2), thread_name_prefix="ai-model")
+        
+        # Rate limiting semaphores for resource management
+        self.model_loading_semaphore = asyncio.Semaphore(1)  # Only one model load at a time
+        self.inference_semaphore = asyncio.Semaphore(2)  # Max 2 concurrent AI inferences
+        self.request_rate_limiter = asyncio.Semaphore(5)  # Max 5 concurrent requests
+        
+        # Enhanced cache with memory management
+        self.analysis_cache = {}
+        self.cache_max_size = 50  # Reduced to prevent memory issues
+        self.cache_memory_limit = 100 * 1024 * 1024  # 100MB cache limit
+        self.cache_size_bytes = 0
+        
+        # Circuit breaker for AI operations
+        self.ai_failure_count = 0
+        self.ai_failure_threshold = 5
+        self.ai_recovery_time = 300  # 5 minutes
+        self.ai_last_failure = 0
+        
         # Model will be loaded lazily when needed
     
     async def load_model(self) -> None:
-        """Load the DeepSeek Coder model asynchronously."""
+        """Load the DeepSeek Coder model asynchronously with rate limiting."""
         if self.model_loaded:
             return
             
-        try:
-            model_path = Path(MODEL_PATH).resolve()
-            if not model_path.exists():
-                logger.error(f"Model file not found at {model_path}")
+        # Apply rate limiting for model loading
+        async with self.model_loading_semaphore:
+            # Double-check after acquiring semaphore
+            if self.model_loaded:
                 return
-            
-            logger.info(f"Loading DeepSeek Coder model from {model_path}")
-            
-            # Load model in shared thread pool to avoid blocking event loop
-            loop = asyncio.get_event_loop()
-            self.model = await loop.run_in_executor(
-                self.thread_pool,
-                self._load_model_sync,
-                str(model_path)
-            )
-            
-            if self.model is not None:
-                self.model_loaded = True
-                logger.info("DeepSeek Coder model loaded successfully")
-            else:
-                logger.error("Failed to load model")
-                self.model_loaded = False
                 
-        except Exception as e:
-            logger.error(f"Failed to load DeepSeek Coder model: {str(e)}")
-            self.model_loaded = False
+            try:
+                model_path = Path(MODEL_PATH).resolve()
+                if not model_path.exists():
+                    logger.error(f"Model file not found at {model_path}")
+                    return
+                
+                logger.info(f"Loading DeepSeek Coder model from {model_path}")
+                
+                # Load model in shared thread pool to avoid blocking event loop
+                loop = asyncio.get_event_loop()
+                self.model = await loop.run_in_executor(
+                    self.thread_pool,
+                    self._load_model_sync,
+                    str(model_path)
+                )
+            
+                if self.model is not None:
+                    self.model_loaded = True
+                    logger.info("DeepSeek Coder model loaded successfully")
+                else:
+                    logger.error("Failed to load model")
+                    self.model_loaded = False
+                        
+            except Exception as e:
+                logger.error(f"Failed to load DeepSeek Coder model: {str(e)}")
+                self.model_loaded = False
     
     def _load_model_sync(self, model_path: str) -> Optional[Llama]:
         """Synchronous model loading for thread executor."""
@@ -94,7 +118,7 @@ class AICodeAnalyzer:
     
     async def analyze_code(self, request: CodeAnalysisRequest) -> Dict[str, Any]:
         """
-        Analyze code using the DeepSeek Coder model.
+        Analyze code using the DeepSeek Coder model with rate limiting and circuit breaker.
         
         Args:
             request: CodeAnalysisRequest object containing all analysis parameters
@@ -102,11 +126,26 @@ class AICodeAnalyzer:
         Returns:
             Dict containing analysis results in the expected format
         """
+        # Apply rate limiting for concurrent requests
+        async with self.request_rate_limiter:
+            # Check circuit breaker state
+            if self._is_circuit_breaker_open():
+                logger.warning("AI service circuit breaker is open, using fallback")
+                return await self._generate_fallback_response(request)
+            
+            # Check cache first for performance improvement
+            import hashlib
+            cache_key = hashlib.md5(f"{request.code}_{request.language}_{request.analysis_type}".encode()).hexdigest()
+            
+            if cache_key in self.analysis_cache:
+                logger.info("🚀 Returning cached analysis result")
+                return self.analysis_cache[cache_key]
+        
         if not self.model_loaded or self.model is None:
             logger.warning("Model not loaded, attempting to reload")
             await self.load_model()
             if not self.model_loaded:
-                return self._generate_fallback_response("Model could not be loaded", request.code)
+                return await self._generate_fallback_response(request)
         
         try:
             logger.info(f"🤖 Starting AI analysis for {request.language} code, analysis type: {request.analysis_type}")
@@ -119,14 +158,32 @@ class AICodeAnalyzer:
             # Prepare the prompt for the model
             prompt = self._create_analysis_prompt(code, language.value, analysis_type.value)
             
-            # Generate response from the model asynchronously with CPU throttling
-            await asyncio.sleep(CPU_THROTTLE_DELAY)  # CPU throttling before inference
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                self.thread_pool,
-                self._generate_completion_sync,
-                prompt
-            )
+            # Apply rate limiting for AI inference
+            async with self.inference_semaphore:
+                try:
+                    # Generate response from the model asynchronously with CPU throttling
+                    await asyncio.sleep(CPU_THROTTLE_DELAY)  # CPU throttling before inference
+                    loop = asyncio.get_event_loop()
+                    response = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            self.thread_pool,
+                            self._generate_completion_sync,
+                            prompt
+                        ),
+                        timeout=120.0  # 2 minute timeout for AI inference
+                    )
+                    
+                    # Reset failure count on success
+                    self.ai_failure_count = 0
+                    
+                except asyncio.TimeoutError:
+                    logger.error("AI inference timed out after 2 minutes")
+                    self._record_ai_failure()
+                    return await self._generate_fallback_response(request)
+                except Exception as e:
+                    logger.error(f"AI inference failed: {str(e)}")
+                    self._record_ai_failure()
+                    return await self._generate_fallback_response(request)
             
             # Memory cleanup after inference
             await self._cleanup_after_analysis()
@@ -138,14 +195,18 @@ class AICodeAnalyzer:
             # Parse the JSON response
             analysis_result = self._parse_ai_response(generated_text, language, analysis_type, code)
             
+            # Cache the result for future use with memory management
+            self._manage_cache_memory(cache_key, analysis_result)
+            
             logger.info(f"✅ AI analysis completed successfully")
             return analysis_result
             
         except Exception as e:
             logger.error(f"❌ Error during code analysis: {str(e)}")
+            self._record_ai_failure()
             # Ensure cleanup even on error
             await self._cleanup_after_analysis()
-            return self._generate_fallback_response(f"Analysis failed: {str(e)}", request.code)
+            return await self._generate_fallback_response(request)
     
     # Legacy method for backward compatibility (if needed)
     async def analyze_code_legacy(self, 
@@ -222,18 +283,22 @@ class AICodeAnalyzer:
             "- Poor practices or maintainability issues: Score 4-6\n"
             "- Good code with minor improvements: Score 6-8\n"
             "- Excellent code following best practices: Score 8-10\n\n"
-            "CONSTRUCTIVE FEEDBACK FOR CLEAN CODE:\n"
-            "Even when code is clean and functional, ALWAYS provide educational suggestions in these areas:\n"
-            "1. DOCUMENTATION: JSDoc comments, inline documentation, README considerations\n"
-            "2. ROBUSTNESS: Input validation, error handling, edge case coverage\n"
-            "3. TYPE SAFETY: TypeScript migration, parameter typing, return type annotations\n"
-            "4. MAINTAINABILITY: Code organization, modularity, naming improvements\n"
-            "5. TESTING: Unit test suggestions, test coverage, testability improvements\n"
-            "6. PERFORMANCE: Optimization opportunities, scalability considerations\n"
-            "7. ACCESSIBILITY: UI/UX improvements for user-facing code\n"
-            "8. SECURITY: Defense-in-depth practices, security best practices\n\n"
-            "IMPORTANT: Always provide educational explanations for your findings. "
-            "Even for perfect code, suggest enhancements that demonstrate professional development practices.\n\n"
+            "SMART FEEDBACK STRATEGY:\n"
+            "For simple functions (under 10 lines), provide 2-3 SPECIFIC, ACTIONABLE suggestions.\n"
+            "For complex code (10+ lines), provide up to 5 suggestions.\n"
+            "PRIORITIZE immediate, actionable improvements over generic advice:\n\n"
+            "HIGH PRIORITY (simple functions):\n"
+            "- Missing JSDoc/documentation for function parameters and return values\n"
+            "- Missing input validation for function parameters\n"
+            "- Missing error handling for operations that could fail\n"
+            "- Specific naming improvements (vague variable names)\n\n"
+            "LOWER PRIORITY (complex functions only):\n"
+            "- Language migration suggestions (TypeScript, etc.)\n"
+            "- Architecture patterns and code organization\n"
+            "- Performance optimizations for non-performance-critical code\n"
+            "- General testing suggestions without specific test cases\n\n"
+            "IMPORTANT: Focus on what the developer can implement immediately. "
+            "Avoid generic advice like 'consider using TypeScript' for simple working functions.\n\n"
             "Return ONLY valid JSON in this exact format:\n"
             "{\n"
             '  "bugs": ["Detailed bug descriptions with explanations"],\n'
@@ -524,11 +589,18 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
             if "function" in code_lower and "try" not in code_lower:
                 quality.append("Add error handling with try-catch blocks to gracefully handle potential runtime errors and improve user experience.")
             
-            if not any("TypeScript" in item for item in quality):
-                quality.append("Consider migrating to TypeScript for better type safety, enhanced IDE support, and improved code documentation through type annotations.")
+            # Only suggest TypeScript for complex functions or existing projects
+            if len(lines) > 15 and is_javascript and not any("TypeScript" in item for item in quality):
+                quality.append("For larger codebases like this, consider migrating to TypeScript for better type safety and IDE support.")
                 
-            if len(lines) <= 5 and "function" in code_lower:
-                quality.append("For small functions like this, consider: 1) Adding unit tests, 2) Grouping related functions in modules, 3) Using modern ES6+ features.")
+            # Focus on immediate improvements for small functions
+            if len(lines) <= 10 and "function" in code_lower:
+                if "/**" not in code and "@param" not in code:
+                    quality.append("Add JSDoc comments to document function parameters, return value, and purpose for better code maintainability.")
+                if "(" in code and ")" in code and "if" not in code_lower:
+                    quality.append("Consider adding input validation to ensure function parameters meet expected criteria.")
+            elif len(lines) > 10:
+                quality.append("For larger functions, consider: 1) Adding comprehensive unit tests, 2) Breaking into smaller, focused functions, 3) Using modern ES6+ features.")
                 
             # Performance suggestions for any JavaScript code
             if not performance:
@@ -557,12 +629,31 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
         else:
             summary = "Code analysis shows good practices with targeted suggestions for professional development and best practices."
             
-        # Adjust score based on findings
-        if security:
-            score = min(score, 4)
-        if bugs:
-            score = min(score, 5)
-        if len(quality) > 3:
+        # Adjust score based on actual issues found (not positive feedback)
+        # Count real issues vs positive feedback messages
+        real_security_issues = [s for s in security if not any(phrase in s.lower() for phrase in ['complete', 'appears', 'no significant', 'continue following'])]
+        real_bugs = [b for b in bugs if not any(phrase in b.lower() for phrase in ['appears sound', 'no significant', 'structure appears'])]
+        real_quality_issues = [q for q in quality if not any(phrase in q.lower() for phrase in ['clean and readable', 'ready for', 'structure is'])]
+        
+        # Only penalize for actual issues, not suggestions or positive feedback
+        if real_security_issues:
+            # Critical security issues get harsh penalty
+            critical_security = any(word in ' '.join(real_security_issues).lower() for word in ['injection', 'xss', 'eval', 'credentials'])
+            if critical_security:
+                score = min(score, 3)
+            else:
+                score = min(score, 6)  # Less harsh for minor security issues
+        
+        if real_bugs:
+            # Critical bugs get penalty
+            critical_bugs = any(word in ' '.join(real_bugs).lower() for word in ['crash', 'fatal', 'division by zero'])
+            if critical_bugs:
+                score = min(score, 4)
+            else:
+                score = min(score, 7)  # Less harsh for minor bugs
+        
+        # Quality suggestions shouldn't heavily penalize clean code
+        if len(real_quality_issues) > 5:  # Only penalize if many real quality issues
             score -= 1
             
         # Ensure score is within bounds
@@ -570,24 +661,53 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
         
         # Ensure we always provide constructive educational feedback
         if not bugs:
-            bugs = ["No critical bugs detected. Code follows good logical structure and practices."]
+            bugs = ["Code structure appears sound with no significant logical issues identified."]
             
         if not security:
             if is_javascript:
-                security = ["No immediate security vulnerabilities found. Consider implementing Content Security Policy (CSP) and input sanitization as defensive measures."]
+                security = ["Security analysis complete - no significant issues found. Consider implementing Content Security Policy (CSP) and input sanitization as defensive measures."]
             else:
-                security = ["No immediate security vulnerabilities found. Continue following secure coding practices and principle of least privilege."]
+                security = ["Security analysis complete - no significant issues found. Continue following secure coding practices and principle of least privilege."]
         
         if not performance:
             if is_javascript:
-                performance = ["No major performance issues detected. For production optimization, consider: code minification, lazy loading, and performance monitoring."]
+                performance = ["Performance analysis complete - no significant issues found. For production optimization, consider: code minification, lazy loading, and performance monitoring."]
             elif is_python:
-                performance = ["No major performance issues detected. For production optimization, consider: caching strategies, async operations, and profiling tools."]
+                performance = ["Performance analysis complete - no significant issues found. For production optimization, consider: caching strategies, async operations, and profiling tools."]
             else:
-                performance = ["No major performance issues detected. Consider profiling for optimization opportunities and scalability planning."]
+                performance = ["Performance analysis complete - no significant issues found. Consider profiling for optimization opportunities and scalability planning."]
         
         if not quality:
             quality = ["Code structure is clean and readable. Ready for professional enhancement through documentation, testing, and modular organization."]
+        
+        # Smart filtering based on code complexity
+        lines = code.strip().split('\n')
+        is_simple_function = len(lines) <= 10
+        
+        if is_simple_function:
+            # For simple functions, prioritize actionable feedback and limit to 2-3 suggestions
+            priority_keywords = ['JSDoc', 'input validation', 'error handling', 'parameter', 'documentation']
+            
+            # Filter quality suggestions to prioritize actionable ones
+            actionable_quality = []
+            generic_quality = []
+            
+            for suggestion in quality:
+                if any(keyword.lower() in suggestion.lower() for keyword in priority_keywords):
+                    actionable_quality.append(suggestion)
+                else:
+                    generic_quality.append(suggestion)
+            
+            # For simple functions: max 2-3 actionable suggestions, avoid generic ones
+            quality = (actionable_quality[:3] + generic_quality[:0]) if actionable_quality else quality[:2]
+            
+            # Simplify performance suggestions for simple functions
+            if performance and len(performance) > 1:
+                performance = [p for p in performance if 'monitoring' not in p.lower() or 'minification' not in p.lower()][:1]
+        else:
+            # For complex functions, allow more suggestions but still limit them
+            quality = quality[:5]
+            performance = performance[:3]
         
         return {
             "bugs": bugs,
@@ -658,7 +778,7 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
         
         logger.info(f"Converting AI data: {ai_data}")
         
-        # Extract data from AI response
+        # Extract data from AI response with proper initialization
         bugs = ai_data.get("bugs", [])
         security_issues = ai_data.get("security", [])
         performance_issues = ai_data.get("performance", [])
@@ -668,44 +788,72 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
         
         logger.info(f"Processing bugs: {bugs}, security: {security_issues}, performance: {performance_issues}, quality: {quality_issues}")
         
-        # Convert to CodeIssue objects
+        # Initialize variables before processing
         issues = []
+        i = 0
+        bug = ""
+        severity = IssueSeverity.LOW
+        issue = None
         
-        # Process bugs with intelligent severity detection
-        for i, bug in enumerate(bugs):
-            if isinstance(bug, str) and len(bug.strip()) > 1:  # Avoid single characters
-                severity = IssueSeverity.LOW
-                bug_lower = bug.lower()
-                
-                # Critical bugs
-                if any(word in bug_lower for word in ['critical', 'division by zero', '/0', 'crash', 'fatal']):
-                    severity = IssueSeverity.CRITICAL
-                elif any(word in bug_lower for word in ['error', 'exception', 'runtime', 'undefined']):
-                    severity = IssueSeverity.HIGH
-                elif any(word in bug_lower for word in ['warning', 'potential', 'risk']):
-                    severity = IssueSeverity.MEDIUM
-                    
-                issue = CodeIssue(
-                    id=f"bug_{uuid.uuid4().hex[:8]}",
-                    type=IssueType.BUG,
-                    severity=severity,
-                    title=f"Critical Division by Zero" if 'division' in bug_lower else f"Bug #{i+1}",
-                    description=bug,
-                    suggestion="Fix this bug to prevent unexpected behavior.",
-                    line_number=None,
-                    column_number=None,
-                    code_snippet=None,
-                    explanation=None,
-                    confidence=0.8
-                )
-                issues.append(issue.dict())  # Convert to dictionary
+        # Process bugs with proper impact-based severity detection in try-catch
+        try:
+            for i, bug in enumerate(bugs):
+                if isinstance(bug, str) and len(bug.strip()) > 1:  # Avoid single characters
+                    severity = self._classify_bug_severity(bug)  # Use proper classification
+                        
+                    issue = CodeIssue(
+                        id=f"bug_{uuid.uuid4().hex[:8]}",
+                        type=IssueType.BUG,
+                        severity=severity,
+                        title=f"Critical Division by Zero" if 'division' in bug.lower() else f"Bug #{i+1}",
+                        description=bug,
+                        suggestion="Fix this bug to prevent unexpected behavior.",
+                        line_number=None,
+                        column_number=None,
+                        code_snippet=None,
+                        explanation=None,
+                        confidence=0.8
+                    )
+                    issues.append(issue.model_dump())  # Convert to dictionary
+        except NameError as e:
+            logger.error(f"NameError in bug processing loop: {str(e)}. Variables - i: {i}, bug: {bug}, severity: {severity}")
+            # Add a fallback issue to indicate the error
+            fallback_issue = CodeIssue(
+                id=f"bug_error_{uuid.uuid4().hex[:8]}",
+                type=IssueType.BUG,
+                severity=IssueSeverity.LOW,
+                title="Bug Processing Error",
+                description=f"Error processing bug analysis: {str(e)}",
+                suggestion="Review the bug detection logic for variable initialization issues.",
+                line_number=None,
+                column_number=None,
+                code_snippet=None,
+                explanation=None,
+                confidence=0.5
+            )
+            issues.append(fallback_issue.model_dump())
+        except Exception as e:
+            logger.error(f"Unexpected error in bug processing loop: {str(e)}")
+            # Add a fallback issue to indicate the error
+            fallback_issue = CodeIssue(
+                id=f"bug_error_{uuid.uuid4().hex[:8]}",
+                type=IssueType.BUG,
+                severity=IssueSeverity.LOW,
+                title="Bug Processing Error",
+                description=f"Unexpected error processing bug analysis: {str(e)}",
+                suggestion="Review the bug detection logic for potential issues.",
+                line_number=None,
+                column_number=None,
+                code_snippet=None,
+                explanation=None,
+                confidence=0.5
+            )
+            issues.append(fallback_issue.model_dump())
 
-        # Process security issues
+        # Process security issues with proper impact-based classification
         for i, issue in enumerate(security_issues):
             if isinstance(issue, str) and len(issue.strip()) > 1:
-                severity = IssueSeverity.HIGH
-                if any(word in issue.lower() for word in ['injection', 'xss', 'auth', 'critical']):
-                    severity = IssueSeverity.CRITICAL
+                severity = self._classify_security_severity(issue)  # Use proper classification
                     
                 issue_obj = CodeIssue(
                     id=f"security_{uuid.uuid4().hex[:8]}",
@@ -720,15 +868,16 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
                     explanation=None,
                     confidence=0.8
                 )
-                issues.append(issue_obj.dict())  # Convert to dictionary
+                issues.append(issue_obj.model_dump())  # Convert to dictionary
                 
-        # Process performance issues
+        # Process performance issues with proper impact-based classification
         for i, issue in enumerate(performance_issues):
             if isinstance(issue, str) and len(issue.strip()) > 1:
+                severity = self._classify_performance_severity(issue)  # Use proper classification
                 issue_obj = CodeIssue(
                     id=f"perf_{uuid.uuid4().hex[:8]}",
                     type=IssueType.PERFORMANCE,
-                    severity=IssueSeverity.LOW,
+                    severity=severity,
                     title=f"Performance Improvement #{i+1}",
                     description=issue,
                     suggestion="Consider this optimization for better performance.",
@@ -738,15 +887,16 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
                     explanation=None,
                     confidence=0.7
                 )
-                issues.append(issue_obj.dict())  # Convert to dictionary
+                issues.append(issue_obj.model_dump())  # Convert to dictionary
         
-        # Process quality issues
+        # Process quality issues with proper classification
         for i, issue in enumerate(quality_issues):
             if isinstance(issue, str) and len(issue.strip()) > 1:
+                severity = self._classify_quality_severity(issue)  # Use proper classification
                 issue_obj = CodeIssue(
                     id=f"quality_{uuid.uuid4().hex[:8]}",
                     type=IssueType.STYLE,
-                    severity=IssueSeverity.LOW,
+                    severity=severity,
                     title=f"Code Quality Suggestion #{i+1}",
                     description=issue,
                     suggestion="Improve code quality and maintainability.",
@@ -756,7 +906,7 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
                     explanation=None,
                     confidence=0.7
                 )
-                issues.append(issue_obj.dict())  # Convert to dictionary
+                issues.append(issue_obj.model_dump())  # Convert to dictionary
         
         logger.info(f"Created {len(issues)} total issues")
         
@@ -828,8 +978,8 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
         
         return {
             "issues": issues,  # Already converted to dictionaries above
-            "metrics": metrics.dict(),  # Convert to dictionary
-            "summary": summary.dict(),  # Convert to dictionary
+            "metrics": metrics.model_dump(),  # Convert to dictionary
+            "summary": summary.model_dump(),  # Convert to dictionary
             "suggestions": suggestions
         }
     
@@ -895,9 +1045,9 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
         )
         
         return {
-            "issues": [fallback_issue],
-            "metrics": metrics,
-            "summary": summary,
+            "issues": [fallback_issue.model_dump()],
+            "metrics": metrics.model_dump(),
+            "summary": summary.model_dump(),
             "suggestions": ["Try again with a smaller code sample."]
         }
     
@@ -912,20 +1062,32 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
         try:
             logger.debug("🧹 Performing post-analysis memory cleanup")
             
-            # Force garbage collection to free unused memory
-            collected = gc.collect()
-            if collected > 0:
-                logger.debug(f"Garbage collected {collected} objects after AI analysis")
+            # Reduce aggressive garbage collection - only run occasionally
+            current_time = time.time()
+            if not hasattr(self, '_last_gc_time'):
+                self._last_gc_time = 0
+                
+            # Only run GC every 30 seconds to reduce overhead
+            if current_time - self._last_gc_time > 30:
+                collected = gc.collect()
+                self._last_gc_time = current_time
+                if collected > 0:
+                    logger.debug(f"Garbage collected {collected} objects after AI analysis")
             
-            # Optional: Unload model if memory pressure is high
-            try:
-                import psutil
-                memory_percent = psutil.virtual_memory().percent
-                if memory_percent > 90:  # If system memory > 90%
-                    logger.warning(f"High memory usage {memory_percent:.1f}%, considering model unload")
-                    await self._unload_model_if_needed()
-            except ImportError:
-                pass  # psutil not available
+            # Reduce memory pressure checks - only check every 60 seconds
+            if not hasattr(self, '_last_memory_check'):
+                self._last_memory_check = 0
+                
+            if current_time - self._last_memory_check > 60:
+                try:
+                    import psutil
+                    memory_percent = psutil.virtual_memory().percent
+                    self._last_memory_check = current_time
+                    if memory_percent > 95:  # Only unload at 95% instead of 90%
+                        logger.warning(f"High memory usage {memory_percent:.1f}%, considering model unload")
+                        await self._unload_model_if_needed()
+                except ImportError:
+                    pass  # psutil not available
                 
             self.last_cleanup_time = current_time
             
@@ -945,6 +1107,215 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
             except Exception as e:
                 logger.error(f"❌ Error unloading model: {e}")
     
+    def _classify_bug_severity(self, bug_description: str) -> IssueSeverity:
+        """
+        Classify bug severity based on actual functionality impact.
+        CRITICAL = breaks functionality, crashes, data loss
+        HIGH = significant logic errors, incorrect behavior
+        MEDIUM = edge cases, minor logic issues
+        LOW = style suggestions, minor improvements
+        """
+        bug_lower = bug_description.lower()
+        
+        # CRITICAL: Functionality-breaking bugs
+        critical_indicators = [
+            'crash', 'fatal', 'segfault', 'core dump', 'infinite loop', 'deadlock',
+            'division by zero', '/0', 'null pointer', 'memory leak', 'buffer overflow',
+            'stack overflow', 'data corruption', 'undefined behavior', 'breaks functionality'
+        ]
+        
+        if any(indicator in bug_lower for indicator in critical_indicators):
+            return IssueSeverity.CRITICAL
+            
+        # HIGH: Significant logic errors
+        high_indicators = [
+            'logic error', 'incorrect result', 'wrong calculation', 'fails to execute',
+            'exception not handled', 'resource leak', 'race condition', 'thread safety'
+        ]
+        
+        if any(indicator in bug_lower for indicator in high_indicators):
+            return IssueSeverity.HIGH
+            
+        # MEDIUM: Minor issues that could cause problems
+        medium_indicators = [
+            'edge case', 'potential issue', 'may fail', 'could cause', 'might result'
+        ]
+        
+        if any(indicator in bug_lower for indicator in medium_indicators):
+            return IssueSeverity.MEDIUM
+            
+        # LOW: Everything else (suggestions, improvements)
+        return IssueSeverity.LOW
+    
+    def _classify_security_severity(self, security_description: str) -> IssueSeverity:
+        """
+        Classify security severity based on actual vulnerability impact.
+        CRITICAL = Remote code execution, privilege escalation
+        HIGH = Data exposure, authentication bypass
+        MEDIUM = Information disclosure, DoS potential
+        LOW = Security best practices, hardening suggestions
+        """
+        security_lower = security_description.lower()
+        
+        # CRITICAL: Arbitrary code execution, system compromise
+        critical_indicators = [
+            'remote code execution', 'arbitrary code', 'code injection', 'eval(',
+            'exec(', 'privilege escalation', 'root access', 'admin access',
+            'sql injection', 'command injection', 'deserialization'
+        ]
+        
+        if any(indicator in security_lower for indicator in critical_indicators):
+            return IssueSeverity.CRITICAL
+            
+        # HIGH: Data exposure, authentication issues
+        high_indicators = [
+            'xss', 'cross-site scripting', 'csrf', 'authentication bypass',
+            'authorization bypass', 'data exposure', 'sensitive data',
+            'password', 'credentials', 'api key', 'token exposure',
+            'path traversal', 'directory traversal'
+        ]
+        
+        if any(indicator in security_lower for indicator in high_indicators):
+            return IssueSeverity.HIGH
+            
+        # MEDIUM: Information disclosure, DoS
+        medium_indicators = [
+            'information disclosure', 'denial of service', 'dos', 'timing attack',
+            'weak encryption', 'insecure hash', 'session fixation'
+        ]
+        
+        if any(indicator in security_lower for indicator in medium_indicators):
+            return IssueSeverity.MEDIUM
+            
+        # LOW: Best practices, suggestions
+        return IssueSeverity.LOW
+    
+    def _classify_performance_severity(self, performance_description: str) -> IssueSeverity:
+        """
+        Classify performance severity based on actual impact.
+        CRITICAL = System failure, DoS potential
+        HIGH = Severe performance degradation
+        MEDIUM = Noticeable performance impact
+        LOW = Minor optimizations, best practices
+        """
+        perf_lower = performance_description.lower()
+        
+        # CRITICAL: System-breaking performance issues
+        critical_indicators = [
+            'infinite loop', 'exponential complexity', 'memory exhaustion',
+            'cpu exhaustion', 'system overload', 'denial of service'
+        ]
+        
+        if any(indicator in perf_lower for indicator in critical_indicators):
+            return IssueSeverity.CRITICAL
+            
+        # HIGH: Severe performance degradation
+        high_indicators = [
+            'o(n²)', 'quadratic', 'o(n³)', 'cubic', 'blocking operation',
+            'synchronous i/o', 'large memory usage', 'significant slowdown'
+        ]
+        
+        if any(indicator in perf_lower for indicator in high_indicators):
+            return IssueSeverity.HIGH
+            
+        # MEDIUM: Noticeable impact
+        medium_indicators = [
+            'inefficient', 'repeated computation', 'unnecessary loops',
+            'database query in loop', 'n+1 query', 'missing index'
+        ]
+        
+        if any(indicator in perf_lower for indicator in medium_indicators):
+            return IssueSeverity.MEDIUM
+            
+        # LOW: Minor optimizations
+        return IssueSeverity.LOW
+    
+    def _classify_quality_severity(self, quality_description: str) -> IssueSeverity:
+        """
+        Classify code quality severity - these should mostly be LOW.
+        CRITICAL = Never for quality issues
+        HIGH = Code that makes maintenance dangerous
+        MEDIUM = Code that significantly hurts maintainability  
+        LOW = Style, documentation, best practices
+        """
+        quality_lower = quality_description.lower()
+        
+        # HIGH: Dangerous maintenance issues (rare for quality)
+        high_indicators = [
+            'complex nested', 'unreadable code', 'magic numbers in critical',
+            'no error handling in critical', 'dangerous pattern'
+        ]
+        
+        if any(indicator in quality_lower for indicator in high_indicators):
+            return IssueSeverity.HIGH
+            
+        # MEDIUM: Significant maintainability issues
+        medium_indicators = [
+            'very long function', 'deeply nested', 'complex logic',
+            'difficult to understand', 'hard to maintain'
+        ]
+        
+        if any(indicator in quality_lower for indicator in medium_indicators):
+            return IssueSeverity.MEDIUM
+            
+        # LOW: Style, documentation, best practices (default for quality)
+        return IssueSeverity.LOW
+
+    def _is_circuit_breaker_open(self) -> bool:
+        """Check if the AI service circuit breaker is open."""
+        if self.ai_failure_count < self.ai_failure_threshold:
+            return False
+        
+        # Check if recovery time has passed
+        if time.time() - self.ai_last_failure > self.ai_recovery_time:
+            logger.info("Circuit breaker recovery time passed, resetting failure count")
+            self.ai_failure_count = 0
+            return False
+        
+        return True
+    
+    def _record_ai_failure(self):
+        """Record an AI service failure for circuit breaker tracking."""
+        self.ai_failure_count += 1
+        self.ai_last_failure = time.time()
+        logger.warning(f"AI service failure recorded. Count: {self.ai_failure_count}/{self.ai_failure_threshold}")
+        
+        if self.ai_failure_count >= self.ai_failure_threshold:
+            logger.error(f"AI service circuit breaker opened after {self.ai_failure_count} failures")
+    
+    async def _generate_fallback_response(self, request: CodeAnalysisRequest) -> Dict[str, Any]:
+        """Generate a fallback response when AI service is unavailable."""
+        logger.info("Generating fallback response due to AI service unavailability")
+        
+        # Use the existing fallback method but adapt for the new interface
+        fallback_result = self._generate_fallback_response_sync("AI service temporarily unavailable", request.code)
+        
+        return fallback_result
+    
+    def _manage_cache_memory(self, cache_key: str, result: Dict[str, Any]):
+        """Manage cache memory usage to prevent memory leaks."""
+        import sys
+        
+        # Estimate memory size of the result
+        result_size = sys.getsizeof(str(result))
+        
+        # Remove old entries if cache is too large
+        while (self.cache_size_bytes + result_size > self.cache_memory_limit and 
+               len(self.analysis_cache) > 0):
+            # Remove oldest entry
+            oldest_key = next(iter(self.analysis_cache))
+            old_result = self.analysis_cache.pop(oldest_key)
+            old_size = sys.getsizeof(str(old_result))
+            self.cache_size_bytes -= old_size
+            logger.debug(f"Removed cache entry {oldest_key} to free memory")
+        
+        # Add new entry if within limits
+        if len(self.analysis_cache) < self.cache_max_size:
+            self.analysis_cache[cache_key] = result
+            self.cache_size_bytes += result_size
+        else:
+            logger.debug("Cache at maximum size, not adding new entry")
+
     def __del__(self):
         """Cleanup thread pool on destruction"""
         try:

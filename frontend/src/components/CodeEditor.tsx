@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select'
 import { Upload, FileText, Code } from 'lucide-react'
 import { getLanguageFromFilename, validateCode } from '@/lib/utils'
+import { codeExamples } from '@/utils/codeExamples'
 
 interface CodeEditorProps {
   code: string
@@ -37,69 +38,6 @@ const SUPPORTED_LANGUAGES = [
   { code: 'ruby', name: 'Ruby', monacoId: 'ruby' },
 ]
 
-const EXAMPLE_CODE = {
-  python: `def hello_world(name="World"):
-    """A simple greeting function."""
-    print(f"Hello, {name}!")
-    return True
-
-# Example usage
-hello_world("AI Code Reviewer")
-`,
-  javascript: `function helloWorld(name = "World") {
-    // A simple greeting function
-    console.log(\`Hello, \${name}!\`);
-    return true;
-}
-
-// Example usage
-helloWorld("AI Code Reviewer");
-`,
-  typescript: `interface GreetingOptions {
-    name?: string;
-    formal?: boolean;
-}
-
-function helloWorld(options: GreetingOptions = {}): boolean {
-    const { name = "World", formal = false } = options;
-    const greeting = formal ? "Good day" : "Hello";
-    console.log(\`\${greeting}, \${name}!\`);
-    return true;
-}
-
-// Example usage
-helloWorld({ name: "AI Code Reviewer", formal: true });
-`,
-  java: `public class HelloWorld {
-    public static void main(String[] args) {
-        HelloWorld hw = new HelloWorld();
-        hw.greet("AI Code Reviewer");
-    }
-    
-    public boolean greet(String name) {
-        System.out.println("Hello, " + name + "!");
-        return true;
-    }
-}
-`,
-  cpp: `#include <iostream>
-#include <string>
-
-class HelloWorld {
-public:
-    bool greet(const std::string& name = "World") {
-        std::cout << "Hello, " << name << "!" << std::endl;
-        return true;
-    }
-};
-
-int main() {
-    HelloWorld hw;
-    hw.greet("AI Code Reviewer");
-    return 0;
-}
-`
-}
 
 export default function CodeEditor({
   code,
