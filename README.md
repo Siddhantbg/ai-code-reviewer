@@ -2,9 +2,9 @@
 
 A web application that uses AI to review code, detect bugs, suggest improvements, and provide security analysis. This tool helps developers identify issues in their code and receive actionable feedback to improve code quality.
 
+![Landing Page](https://github.com/Siddhantbg/ai-code-reviewer/blob/main/assets/ss2.png)
 ![Code Editor Window](https://github.com/Siddhantbg/ai-code-reviewer/blob/main/assets/ss1.png)
 ![Landing Page](https://github.com/Siddhantbg/ai-code-reviewer/blob/main/assets/ss3.png)
-![Landing Page](https://github.com/Siddhantbg/ai-code-reviewer/blob/main/assets/ss2.png)
 ## Project Structure
 
 ```
