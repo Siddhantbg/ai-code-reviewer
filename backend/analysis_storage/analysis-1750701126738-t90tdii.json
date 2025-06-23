@@ -1,0 +1,13 @@
+{
+  "analysis_id": "analysis-1750701126738-t90tdii",
+  "client_session_id": "X3Mi4uE0-MpB5CFmAAAD",
+  "client_ip": "127.0.0.1",
+  "code_hash": "-8563720861152353727",
+  "result_data": {},
+  "status": "running",
+  "created_at": 1750701126.7543945,
+  "completed_at": null,
+  "ttl_seconds": 7200,
+  "retrieval_count": 0,
+  "max_retrievals": 10
+}

@@ -192,14 +192,10 @@ export function PersistentAnalyses({
           </div>
         )}
 
-        {loading && persistedAnalyses.length === 0 ? (
+        {persistedAnalyses.length === 0 ? (
           <div className="text-center py-8">
-            <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Loading persistent analyses...</p>
-          </div>
-        ) : persistedAnalyses.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-sm text-muted-foreground">No persistent analyses found</p>
+            <p className="text-sm text-muted-foreground">No analyses available</p>
+            <p className="text-xs text-muted-foreground mt-1">Analysis persistence is currently disabled</p>
           </div>
         ) : (
           <div className="space-y-3">

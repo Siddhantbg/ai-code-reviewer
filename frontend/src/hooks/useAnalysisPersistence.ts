@@ -68,6 +68,7 @@ export function useAnalysisPersistence(
       if (errorMessage.includes('404') || errorMessage.includes('Not Found') || errorMessage.includes('Network error')) {
         console.log('📋 Persistence endpoint not available, continuing without persistence features')
         setPersistedAnalyses([])
+        setError(null) // Ensure no error state is set
       } else {
         setError(errorMessage)
       }
@@ -182,13 +183,14 @@ export function useAnalysisPersistence(
     }
   }, [])
 
-  // Initial load
+  // Initial load - remove function dependencies to prevent infinite loops
   useEffect(() => {
     if (sessionId) {
       refreshAnalyses()
       refreshStats()
     }
-  }, [sessionId, refreshAnalyses, refreshStats])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId])
 
   // Auto-refresh setup
   useEffect(() => {

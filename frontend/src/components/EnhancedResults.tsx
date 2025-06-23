@@ -599,7 +599,7 @@ export default function EnhancedResults({ analysis, onExport, onTryAgain, onAnal
               className="flex items-center gap-2"
             >
               <Play className="h-4 w-4" />
-              Analyze Again
+              Refresh
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => handleExport('json')}>

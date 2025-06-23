@@ -223,17 +223,7 @@ export default function AnalysisResults({ analysis, onExport, onTryAgain, onAnal
               Try Again
             </Button>
           )}
-          {onAnalyzeAgain && (
-            <Button 
-              variant="default" 
-              onClick={onAnalyzeAgain}
-              disabled={isRetrying}
-              className="flex items-center gap-2"
-            >
-              <Play className="h-4 w-4" />
-              Analyze Again
-            </Button>
-          )}
+          {/* Removed the Analyze Again button as requested */}
           {onExport && (
             <Button variant="outline" onClick={onExport}>
               <Download className="h-4 w-4 mr-2" />

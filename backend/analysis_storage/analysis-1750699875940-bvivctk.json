@@ -1,0 +1,13 @@
+{
+  "analysis_id": "analysis-1750699875940-bvivctk",
+  "client_session_id": "4KeD-G7u5S2ONaybAAAD",
+  "client_ip": "127.0.0.1",
+  "code_hash": "-4741050935278113608",
+  "result_data": {},
+  "status": "running",
+  "created_at": 1750699875.9604783,
+  "completed_at": null,
+  "ttl_seconds": 7200,
+  "retrieval_count": 0,
+  "max_retrievals": 10
+}
