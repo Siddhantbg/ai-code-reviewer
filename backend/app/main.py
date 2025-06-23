@@ -11,9 +11,11 @@ from datetime import datetime
 from collections import defaultdict
 
 from app.routers import analysis
+from app.routers.persistence import router as persistence_router
 from app.models.requests import CodeAnalysisRequest
 from app.models.responses import HealthResponse, CodeAnalysisResponse
 from app.services.ai_service import ai_analyzer
+from app.services.analysis_persistence import analysis_persistence
 from app.monitoring.resource_monitor import resource_monitor
 from app.utils.performance_optimizer import performance_optimizer
 from app.middleware.rate_limiter import rate_limiter, rate_limit_middleware
@@ -87,7 +89,7 @@ sio = socketio.AsyncServer(
     async_mode='asgi',
     logger=True,
     engineio_logger=True,
-    ping_timeout=120,  # Increased from 60 to 120 seconds
+    ping_timeout=180,  # INCREASED from 120 to 180 seconds (3 minutes) for AI processing
     ping_interval=60,  # Increased from 25 to 60 seconds
     max_http_buffer_size=10**7,  # Increased buffer size
     allow_upgrades=True,
@@ -363,6 +365,25 @@ async def start_analysis(sid, data):
             'task': None
         }
         
+        # Store initial analysis state for persistence
+        client_info = connection_stats['client_info'].get(sid, {})
+        client_ip = client_info.get('remote_addr', 'unknown')
+        code_hash = str(hash(code))
+        
+        try:
+            await analysis_persistence.store_analysis_result(
+                analysis_id=analysis_id,
+                client_session_id=sid,
+                client_ip=client_ip,
+                code_hash=code_hash,
+                result_data={},
+                status='running',
+                ttl_seconds=7200  # 2 hours TTL for running analyses
+            )
+            logger.info(f"📝 Analysis state stored: {analysis_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to store analysis state {analysis_id}: {e}")
+        
         # Update resource monitor
         resource_monitor.update_analysis_count(len(active_analyses))
         
@@ -531,7 +552,7 @@ async def run_analysis_with_progress(
                     result = await ai_circuit_breaker.call(
                         lambda: asyncio.wait_for(
                             ai_analyzer.analyze_code(request),
-                            timeout=120.0  # 2 minute timeout
+                            timeout=300.0  # INCREASED from 2 minutes to 5 minutes for AI analysis
                         )
                     )
                 
@@ -585,6 +606,25 @@ async def run_analysis_with_progress(
             'suggestions': result.get('suggestions', [])
         }
         
+        # Store analysis result for persistence
+        client_info = connection_stats['client_info'].get(sid, {})
+        client_ip = client_info.get('remote_addr', 'unknown')
+        code_hash = str(hash(code))
+        
+        try:
+            await analysis_persistence.store_analysis_result(
+                analysis_id=analysis_id,
+                client_session_id=sid,
+                client_ip=client_ip,
+                code_hash=code_hash,
+                result_data=complete_result,
+                status='completed',
+                ttl_seconds=3600  # 1 hour TTL
+            )
+            logger.info(f"💾 Analysis result persisted: {analysis_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to persist analysis result {analysis_id}: {e}")
+        
         # Send completion with complete result
         await sio.emit('analysis_complete', {
             'analysisId': analysis_id,
@@ -618,6 +658,17 @@ async def run_analysis_with_progress(
         
     except Exception as e:
         logger.error(f"❌ Analysis error for {analysis_id}: {str(e)}")
+        
+        # Update persistence with error status
+        try:
+            await analysis_persistence.update_analysis_status(
+                analysis_id=analysis_id,
+                status='failed',
+                result_data={'error': str(e), 'timestamp': datetime.utcnow().isoformat()}
+            )
+        except Exception as persist_error:
+            logger.error(f"❌ Failed to persist error status for {analysis_id}: {persist_error}")
+        
         await sio.emit('analysis_error', {
             'analysisId': analysis_id,
             'error': str(e)
@@ -651,7 +702,7 @@ async def check_analysis_status(sid, data):
     
     logger.info(f"🔍 Checking analysis status for {analysis_id} from client {sid}")
     
-    # Check if analysis is still active
+    # First check if analysis is still active in memory
     if analysis_id in active_analyses:
         analysis_data = active_analyses[analysis_id]
         task = analysis_data.get('task')
@@ -666,6 +717,7 @@ async def check_analysis_status(sid, data):
             }, room=sid)
             
             logger.info(f"📊 Analysis {analysis_id} still running - sent progress update")
+            return
         elif task and task.done():
             # Analysis completed, check result
             try:
@@ -678,6 +730,7 @@ async def check_analysis_status(sid, data):
                 # Clean up
                 del active_analyses[analysis_id]
                 logger.info(f"✅ Analysis {analysis_id} was completed - sent result")
+                return
             except Exception as e:
                 # Analysis failed
                 await sio.emit('analysis_error', {
@@ -687,25 +740,48 @@ async def check_analysis_status(sid, data):
                 
                 # Clean up
                 del active_analyses[analysis_id]
-                logger.error(f"❌ Analysis {analysis_id} failed - sent error")
-        else:
-            # No active task, analysis may have been cancelled or lost
-            await sio.emit('analysis_error', {
+                logger.info(f"❌ Analysis {analysis_id} failed - sent error")
+                return
+    
+    # Check persistence service for completed results
+    try:
+        client_info = connection_stats['client_info'].get(sid, {})
+        client_ip = client_info.get('remote_addr', 'unknown')
+        
+        result_data = await analysis_persistence.retrieve_analysis_result(
+            analysis_id=analysis_id,
+            client_session_id=sid,
+            client_ip=client_ip
+        )
+        
+        if result_data:
+            # Found persisted result
+            await sio.emit('analysis_complete', {
                 'analysisId': analysis_id,
-                'error': 'Analysis was cancelled or lost during disconnection'
+                'result': result_data
             }, room=sid)
             
-            # Clean up
-            del active_analyses[analysis_id]
-            logger.warning(f"⚠️ Analysis {analysis_id} was lost - notified client")
-    else:
-        # Analysis not found, likely completed or cancelled
+            await sio.emit('notification', {
+                'type': 'info',
+                'message': f'Recovered analysis result: {analysis_id[:8]}...'
+            }, room=sid)
+            
+            logger.info(f"📤 Recovered analysis result from persistence: {analysis_id}")
+        else:
+            # No result found
+            await sio.emit('analysis_error', {
+                'analysisId': analysis_id,
+                'error': 'Analysis result not found or has expired'
+            }, room=sid)
+            
+            logger.info(f"🔍 No persisted result found for analysis: {analysis_id}")
+    
+    except Exception as e:
+        logger.error(f"❌ Failed to check persisted analysis {analysis_id}: {e}")
         await sio.emit('analysis_error', {
             'analysisId': analysis_id,
-            'error': 'Analysis not found - it may have completed or been cancelled'
+            'error': 'Failed to check analysis status'
         }, room=sid)
-        
-        logger.info(f"❓ Analysis {analysis_id} not found - likely completed or cancelled")
 
 async def cancel_analysis_internal(analysis_id: str, sid: str):
     """Internal function to cancel analysis."""
@@ -736,6 +812,7 @@ socket_app = socketio.ASGIApp(sio, app)
 
 # Include routers
 app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
+app.include_router(persistence_router, prefix="/api/v1", tags=["persistence"])
 
 # Periodic connection monitoring
 async def periodic_connection_monitoring():

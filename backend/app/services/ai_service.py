@@ -138,7 +138,7 @@ class AICodeAnalyzer:
             cache_key = hashlib.md5(f"{request.code}_{request.language}_{request.analysis_type}".encode()).hexdigest()
             
             if cache_key in self.analysis_cache:
-                logger.info("🚀 Returning cached analysis result")
+                logger.info("Returning cached analysis result")
                 return self.analysis_cache[cache_key]
         
         if not self.model_loaded or self.model is None:
@@ -148,7 +148,7 @@ class AICodeAnalyzer:
                 return await self._generate_fallback_response(request)
         
         try:
-            logger.info(f"🤖 Starting AI analysis for {request.language} code, analysis type: {request.analysis_type}")
+            logger.info(f"Starting AI analysis for {request.language} code, analysis type: {request.analysis_type}")
             
             # Extract parameters from request
             code = request.code
@@ -170,7 +170,7 @@ class AICodeAnalyzer:
                             self._generate_completion_sync,
                             prompt
                         ),
-                        timeout=120.0  # 2 minute timeout for AI inference
+                        timeout=300.0  # INCREASED from 2 minutes to 5 minutes for complex AI inference
                     )
                     
                     # Reset failure count on success
@@ -198,11 +198,11 @@ class AICodeAnalyzer:
             # Cache the result for future use with memory management
             self._manage_cache_memory(cache_key, analysis_result)
             
-            logger.info(f"✅ AI analysis completed successfully")
+            logger.info(f"AI analysis completed successfully")
             return analysis_result
             
         except Exception as e:
-            logger.error(f"❌ Error during code analysis: {str(e)}")
+            logger.error(f"Error during code analysis: {str(e)}")
             self._record_ai_failure()
             # Ensure cleanup even on error
             await self._cleanup_after_analysis()
@@ -319,9 +319,9 @@ class AICodeAnalyzer:
         """Get language-specific analysis guidelines."""
         checks = {
             "javascript": """
-JAVASCRIPT-SPECIFIC ANALYSIS POINTS:
+# JAVASCRIPT-SPECIFIC ANALYSIS POINTS:
 
-🔐 SECURITY CONSIDERATIONS:
+# SECURITY CONSIDERATIONS:
 - DOM manipulation safety (innerHTML vs textContent)
 - Event listener security and XSS prevention
 - CORS configuration and same-origin policy
@@ -330,7 +330,7 @@ JAVASCRIPT-SPECIFIC ANALYSIS POINTS:
 - eval() usage and code injection risks
 - Third-party script inclusion safety
 
-⚡ PERFORMANCE OPTIMIZATION:
+# PERFORMANCE OPTIMIZATION:
 - Event delegation patterns
 - DOM query optimization (querySelector vs getElementById)
 - Memory leak prevention (event listener cleanup)
@@ -338,7 +338,7 @@ JAVASCRIPT-SPECIFIC ANALYSIS POINTS:
 - Bundle size and lazy loading opportunities
 - Unnecessary re-renders in frameworks
 
-📝 CODE QUALITY & BEST PRACTICES:
+# CODE QUALITY & BEST PRACTICES:
 - Modern ES6+ features utilization (const/let, arrow functions, destructuring)
 - Promise patterns vs async/await
 - Error handling with try/catch blocks
@@ -346,7 +346,7 @@ JAVASCRIPT-SPECIFIC ANALYSIS POINTS:
 - Consistent naming conventions (camelCase)
 - Module import/export patterns
 
-🏗️ ARCHITECTURAL PATTERNS:
+# ARCHITECTURAL PATTERNS:
 - Separation of concerns
 - Component composition patterns
 - State management approaches
@@ -354,7 +354,7 @@ JAVASCRIPT-SPECIFIC ANALYSIS POINTS:
 - Error boundary implementations
 - Testing strategy considerations
 
-📚 EDUCATIONAL ENHANCEMENTS FOR CLEAN CODE:
+# EDUCATIONAL ENHANCEMENTS FOR CLEAN CODE:
 - JSDoc documentation with @param, @returns, @example tags
 - Input validation using libraries like Joi or custom validators
 - Error handling with custom Error classes and proper error propagation
@@ -367,21 +367,21 @@ JAVASCRIPT-SPECIFIC ANALYSIS POINTS:
 - Modern JavaScript features and upcoming ECMAScript proposals""",
             
             "typescript": """
-TYPESCRIPT-SPECIFIC ANALYSIS POINTS:
+# TYPESCRIPT-SPECIFIC ANALYSIS POINTS:
 
-🔐 SECURITY CONSIDERATIONS:
+# SECURITY CONSIDERATIONS:
 - Type safety for security-critical operations
 - Strict null checks and undefined handling
 - Interface contracts for API boundaries
 - Generic type constraints for input validation
 
-⚡ PERFORMANCE OPTIMIZATION:
+# PERFORMANCE OPTIMIZATION:
 - Type-only imports for better tree-shaking
 - Union type efficiency
 - Conditional types for compile-time optimization
 - Proper type guards for runtime checks
 
-📝 CODE QUALITY & BEST PRACTICES:
+# CODE QUALITY & BEST PRACTICES:
 - Type annotation completeness
 - Interface vs type alias usage
 - Generic type parameter naming
@@ -389,39 +389,334 @@ TYPESCRIPT-SPECIFIC ANALYSIS POINTS:
 - Strict compiler options adherence
 - Enum vs const assertions
 
-🏗️ ARCHITECTURAL PATTERNS:
+# ARCHITECTURAL PATTERNS:
 - Dependency injection patterns
 - Abstract factory implementations
 - Decorator patterns
 - Advanced type system usage""",
             
             "python": """
-PYTHON-SPECIFIC ANALYSIS POINTS:
+# PYTHON-SPECIFIC ANALYSIS POINTS:
 
-🔐 SECURITY CONSIDERATIONS:
+# SECURITY CONSIDERATIONS:
 - SQL injection prevention
 - Path traversal vulnerabilities
 - Pickle/eval security risks
 - Input validation and sanitization
 
-⚡ PERFORMANCE OPTIMIZATION:
+# PERFORMANCE OPTIMIZATION:
 - List comprehensions vs loops
 - Generator usage for memory efficiency
 - Appropriate data structure selection
 - Caching strategies
 
-📝 CODE QUALITY & BEST PRACTICES:
+# CODE QUALITY & BEST PRACTICES:
 - PEP 8 compliance
 - Type hints usage
 - Docstring completeness
 - Exception handling patterns
 - Context managers usage
 
-🏗️ ARCHITECTURAL PATTERNS:
+# ARCHITECTURAL PATTERNS:
 - Class design and inheritance
 - Decorator patterns
 - Context manager implementations
 - Module organization""",
+
+            "c": """
+# C-SPECIFIC ANALYSIS POINTS:
+
+# CRITICAL SECURITY VULNERABILITIES:
+- Buffer overflow vulnerabilities: strcpy(), strcat(), gets(), sprintf() without bounds checking
+- Format string vulnerabilities: printf() family with user-controlled format strings
+- Memory corruption: use-after-free, double-free, dangling pointers
+- Integer overflow/underflow leading to buffer overflows
+- Null pointer dereference causing segmentation faults
+- Stack-based buffer overflows from unsafe array access
+- Heap corruption from incorrect malloc/free usage
+- Command injection through system(), popen() with unsanitized input
+- Race conditions in multi-threaded code accessing shared memory
+- Uninitialized variable usage leading to unpredictable behavior
+
+# MEMORY MANAGEMENT BEST PRACTICES:
+- Every malloc()/calloc() must have corresponding free()
+- Set pointers to NULL after freeing to prevent use-after-free
+- Check return values of malloc/calloc for allocation failures
+- Use valgrind or AddressSanitizer to detect memory leaks
+- Prefer stack allocation over heap when lifetime is predictable
+- Implement RAII-like patterns with cleanup functions
+- Use static analysis tools like Clang Static Analyzer
+- Initialize all variables before use
+- Avoid memory leaks in error handling paths
+- Consider using memory pools for frequent allocations
+
+# PERFORMANCE OPTIMIZATION:
+- Memory allocation efficiency (prefer stack over heap when possible)
+- Cache-friendly data structures and sequential memory access
+- Loop optimization and avoiding function calls in tight loops
+- Bit manipulation for faster arithmetic operations
+- Memory alignment for optimal processor performance
+- Minimize system calls and I/O operations
+- Use const correctness for compiler optimizations
+- Profile code to identify actual bottlenecks
+
+# CODE QUALITY & DEFENSIVE PROGRAMMING:
+- Always check return values of functions that can fail
+- Validate function parameters at entry points
+- Use const keyword for immutable data
+- Implement comprehensive error handling with meaningful error codes
+- Use assert() for debugging invariants
+- Follow consistent naming conventions
+- Add comprehensive comments for complex pointer arithmetic
+- Use static functions to limit scope and improve modularity
+- Implement proper cleanup in all error paths
+- Use safer alternatives: strncpy() instead of strcpy(), snprintf() instead of sprintf()
+
+# ARCHITECTURAL PATTERNS & BEST PRACTICES:
+- Design clear module interfaces with header files
+- Use opaque pointers to hide implementation details
+- Implement proper error propagation mechanisms
+- Use function pointers for callbacks and plugin architectures
+- Follow single responsibility principle for functions
+- Minimize global variables and use static for file-local variables
+- Implement consistent resource management patterns
+- Use preprocessor macros judiciously with proper guarding
+- Consider using C11 features like _Static_assert for compile-time checks""",
+
+            "go": """
+# GO-SPECIFIC ANALYSIS POINTS:
+
+# CRITICAL SECURITY VULNERABILITIES:
+- SQL injection: Use parameterized queries with database/sql, never string concatenation
+- Cross-site scripting (XSS): Sanitize output with html/template, validate input
+- Path traversal: Validate file paths with filepath.Clean() and check boundaries
+- Command injection: Avoid os/exec with user input, use allowlists for commands
+- CSRF attacks: Implement proper CSRF tokens in web applications
+- JWT vulnerabilities: Validate signatures, check expiration, use secure algorithms
+- TLS misconfiguration: Use strong cipher suites, validate certificates properly
+- Race conditions: Protect shared resources with mutexes or channels
+
+# GOROUTINE LEAK PREVENTION:
+- Always ensure goroutines have a way to terminate (context cancellation)
+- Use context.WithTimeout() or context.WithCancel() for long-running operations
+- Avoid infinite loops without exit conditions in goroutines
+- Close channels properly to signal goroutine completion
+- Use sync.WaitGroup to coordinate goroutine completion
+- Monitor goroutine count in production (runtime.NumGoroutine())
+- Implement graceful shutdown with signal handling
+- Use worker pools instead of spawning unlimited goroutines
+- Set timeouts for network operations to prevent hanging goroutines
+- Test for goroutine leaks using goleak package
+
+# PERFORMANCE OPTIMIZATION:
+- Channel buffering strategies to reduce blocking
+- Use sync.Pool for expensive object reuse
+- Prefer strings.Builder over string concatenation in loops
+- Minimize interface{} usage and type assertions
+- Use slice make() with capacity when size is known
+- Optimize memory allocations to reduce GC pressure
+- Profile with go tool pprof to identify bottlenecks
+- Use benchmark tests to validate performance improvements
+
+# CODE QUALITY & IDIOMATIC GO:
+- Proper error handling: check every error, wrap with fmt.Errorf() or errors.Wrap()
+- Use panic/recover only for truly exceptional situations
+- Design minimal interfaces (accept interfaces, return structs)
+- Follow effective Go naming conventions (camelCase, no underscores)
+- Use context.Context for cancellation and deadlines in long operations
+- Always use defer for cleanup (close files, unlock mutexes)
+- Initialize with zero values when possible, use constructors for complex setup
+- Prefer struct embedding over inheritance-like patterns
+- Use go fmt and go vet as part of development workflow
+
+# CONCURRENT PROGRAMMING PATTERNS:
+- Worker pool pattern for controlled concurrency
+- Producer-consumer with buffered channels
+- Fan-in/fan-out patterns for parallel processing
+- Pipeline patterns with channel composition
+- Use select statement for non-blocking channel operations
+- Implement circuit breaker patterns for fault tolerance
+- Use atomic operations for simple shared counters
+- Prefer channels over shared memory for communication
+- Implement proper backpressure mechanisms""",
+
+            "rust": """
+# RUST-SPECIFIC ANALYSIS POINTS:
+
+# MEMORY SAFETY & SECURITY:
+- Unsafe block usage: Every unsafe block must have a comment explaining why it's safe
+- FFI boundary safety: Validate C interface contracts, handle null pointers
+- Data race prevention: Use Arc<Mutex<T>> or Arc<RwLock<T>> for shared mutable state
+- Serialization security: Validate deserialized data, use serde_derive carefully
+- Input validation: Use strong typing and validation libraries like validator
+- Cryptographic safety: Use audited crates like ring, sodiumoxide, or rustcrypto
+- SQL injection prevention: Use sqlx compile-time checked queries or diesel ORM
+
+# OWNERSHIP & BORROWING MASTERY:
+- Understand when to use owned values (String, Vec<T>) vs references (&str, &[T])
+- Avoid unnecessary cloning - prefer borrowing when possible
+- Use Cow<str> for functions that might need to modify strings
+- Implement proper lifetime annotations for structs with references
+- Use lifetime elision rules effectively to reduce annotation noise
+- Understand interior mutability patterns: Cell<T>, RefCell<T>, Mutex<T>
+- Use Rc<T> for single-threaded shared ownership, Arc<T> for multi-threaded
+- Master the borrow checker: understand when borrows end and how to restructure code
+- Use RAII patterns with Drop trait for automatic resource cleanup
+- Prefer move semantics for expensive operations
+
+# PERFORMANCE OPTIMIZATION:
+- Iterator chains are zero-cost abstractions - prefer them over manual loops
+- Use Vec::with_capacity() when final size is known
+- Prefer &str over String for read-only string operations
+- Use appropriate collection types: Vec, VecDeque, LinkedList, HashMap, BTreeMap
+- Minimize allocations in hot paths
+- Use const generics and const fn for compile-time optimizations
+- Profile with cargo flamegraph and criterion for benchmarking
+- Consider using SIMD with portable_simd or explicit intrinsics
+- Use #[inline] judiciously for performance-critical small functions
+
+# IDIOMATIC RUST PATTERNS:
+- Comprehensive error handling with Result<T, E> and custom error types
+- Use ? operator for error propagation
+- Implement Display and Debug traits appropriately
+- Use pattern matching exhaustively with match statements
+- Design traits for common behavior, implement for your types
+- Use associated types vs generic parameters appropriately
+- Follow Rust naming conventions (snake_case, CamelCase)
+- Write comprehensive unit tests with #[cfg(test)]
+- Use cargo clippy for additional linting and suggestions
+- Document public APIs with /// comments and examples
+
+# ADVANCED PATTERNS & ARCHITECTURE:
+- Builder pattern with typestate for compile-time validation
+- State machines using enums and pattern matching
+- Plugin systems using trait objects (dyn Trait)
+- Async programming: understand Send + Sync bounds for async fn
+- Error handling strategies: use thiserror for library errors, anyhow for applications
+- Generic programming: use where clauses for complex bounds
+- Macro programming: declarative macros (macro_rules!) vs procedural macros
+- Module system: use pub(crate), pub(super) for controlled visibility
+- Dependency injection using traits and generics""",
+
+            "php": """
+# PHP-SPECIFIC ANALYSIS POINTS:
+
+# CRITICAL INJECTION VULNERABILITIES:
+- SQL injection: ALWAYS use prepared statements with PDO or mysqli
+- Cross-site scripting (XSS): Use htmlspecialchars() with ENT_QUOTES | ENT_HTML5
+- Command injection: Avoid exec(), shell_exec(), system() with user input
+- File inclusion (LFI/RFI): Validate file paths, use allowlists, avoid include with user input
+- LDAP injection: Use ldap_escape() for LDAP queries
+- XML injection: Use DOMDocument with proper validation
+- Header injection: Validate headers before using header() function
+- Session fixation: Use session_regenerate_id() after authentication
+- Directory traversal: Use realpath() and validate paths against basedir
+
+# SECURITY BEST PRACTICES:
+- Password security: Use password_hash() with PASSWORD_DEFAULT, password_verify()
+- CSRF protection: Implement token-based CSRF protection
+- Session security: Set secure, httponly, samesite cookie flags
+- Input validation: Use filter_var() with appropriate filters
+- Output encoding: Context-aware output encoding (HTML, JS, CSS, URL)
+- File upload security: Validate file types, scan for malware, store outside web root
+- Authentication: Implement proper session management and timeout
+- Authorization: Use role-based access control (RBAC)
+- Error handling: Don't expose sensitive information in error messages
+- Cryptography: Use random_bytes() for cryptographically secure random data
+
+# PERFORMANCE & SCALABILITY:
+- Database optimization: Avoid N+1 queries, use eager loading, proper indexing
+- Caching strategies: Implement Redis/Memcached, use APCu for opcode caching
+- Memory management: Unset large variables, avoid memory leaks in loops
+- String operations: Use implode() instead of concatenation in loops
+- Array performance: Use array functions (array_map, array_filter) over loops
+- File I/O: Use appropriate stream contexts, batch operations
+- HTTP requests: Use cURL with connection pooling
+- Database connections: Use connection pooling, persistent connections wisely
+- Profile with Xdebug or Blackfire to identify bottlenecks
+
+# MODERN PHP PRACTICES:
+- Type declarations: Use strict types (declare(strict_types=1))
+- Return type declarations: Specify return types for all functions
+- Nullable types: Use ?Type for optional parameters
+- Union types (PHP 8+): Use Type1|Type2 for multiple accepted types
+- Named arguments (PHP 8+): Use for better code readability
+- Attributes (PHP 8+): Use instead of docblock annotations
+- Match expressions (PHP 8+): Use instead of switch for value matching
+- Constructor property promotion (PHP 8+): Simplify constructor declarations
+- Error handling: Use typed exceptions, implement proper exception hierarchy
+- PSR compliance: Follow PSR-1, PSR-2, PSR-4 standards
+
+# ARCHITECTURAL PATTERNS:
+- Dependency injection: Use PSR-11 compatible containers
+- Repository pattern: Separate data access logic from business logic
+- Factory pattern: Create objects without specifying exact classes
+- Observer pattern: Implement event-driven architecture
+- Middleware pattern: Chain request/response processing
+- Service layer pattern: Encapsulate business logic
+- Value objects: Use for domain modeling and validation
+- Command pattern: Implement for complex operations and undo functionality
+- Strategy pattern: Implement different algorithms interchangeably""",
+
+            "ruby": """
+# RUBY-SPECIFIC ANALYSIS POINTS:
+
+# CRITICAL SECURITY VULNERABILITIES:
+- SQL injection: Use ActiveRecord's parameterized queries, avoid raw SQL with interpolation
+- Mass assignment: Use strong parameters with permit() method in Rails
+- Cross-site scripting (XSS): Use rails_html_sanitizer, avoid raw() and html_safe()
+- Command injection: Avoid system(), exec(), and backticks with user input
+- YAML deserialization: Use safe_load() instead of load() for untrusted YAML
+- Session hijacking: Use secure session configuration, regenerate session IDs
+- CSRF attacks: Enable protect_from_forgery in Rails controllers
+- Regular expression DoS (ReDoS): Avoid complex regex with user input
+- File upload vulnerabilities: Validate file types, use carrierwave or shrine securely
+
+# METAPROGRAMMING SAFETY:
+- eval() usage: Avoid eval() with user input - extreme code injection risk
+- class_eval/instance_eval: Use only with trusted code, prefer define_method
+- const_set/const_get: Validate constant names to prevent constant pollution
+- send/public_send: Use public_send to respect method visibility
+- method_missing: Always implement respond_to_missing? alongside method_missing
+- define_method vs def: Use define_method for dynamic method creation
+- Module inclusion: Be careful with prepend vs include vs extend semantics
+- Monkey patching: Use refinements instead of global monkey patches when possible
+- Dynamic class creation: Use Class.new carefully, prefer explicit class definitions
+- Hook methods: Understand inherited, included, extended hook execution order
+
+# PERFORMANCE OPTIMIZATION:
+- N+1 query elimination: Use includes(), preload(), eager_load() appropriately
+- Database query optimization: Use select() to limit columns, use exists? vs present?
+- Memory efficiency: Use Symbol over String for hash keys, avoid String duplication
+- Enumerable performance: Use lazy enumerators for large datasets
+- String operations: Use String#<< for concatenation in loops, prefer interpolation
+- Block vs Proc vs Lambda: Understand performance implications and use appropriately
+- Caching strategies: Use Rails.cache, implement fragment caching, use counter_cache
+- Background processing: Use Sidekiq, Resque, or delayed_job for heavy operations
+- Garbage collection tuning: Configure RUBY_GC_HEAP_GROWTH_FACTOR appropriately
+
+# IDIOMATIC RUBY PRACTICES:
+- Ruby style guide: Follow community style guide (RuboCop configuration)
+- Method naming: Use snake_case, predicate methods end with ?, mutating methods with !
+- Class design: Prefer composition over inheritance, use modules for shared behavior
+- Exception handling: Use specific exception classes, avoid rescuing StandardError broadly
+- Block usage: Prefer block_given? over checking block presence
+- Truthiness: Understand nil and false are falsy, everything else is truthy
+- Constants: Use SCREAMING_SNAKE_CASE, understand constant lookup rules
+- Method visibility: Use private, protected, public appropriately
+- Duck typing: Design for interfaces, not implementation
+- Functional patterns: Use map, select, reject over manual iterations
+
+# ARCHITECTURAL PATTERNS:
+- Service objects: Extract complex business logic into service classes
+- Form objects: Use for complex form handling and validation
+- Policy objects: Implement authorization logic with pundit or cancancan
+- Decorator pattern: Use draper for view-layer logic
+- Observer pattern: Use ActiveSupport::Notifications for event handling
+- Repository pattern: Abstract data access behind repository interfaces
+- Command pattern: Implement for complex operations with rollback capability
+- Factory pattern: Use for object creation with complex setup
+- Concern pattern: Use ActiveSupport::Concern for shared module functionality""",
         }
         
         return checks.get(language, "General code analysis focusing on security, performance, and maintainability.")
@@ -495,6 +790,11 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
         # Detect programming language for specific checks
         is_javascript = any(keyword in code_lower for keyword in ['function', 'const ', 'let ', 'var ', '=>', 'document.', 'window.'])
         is_python = any(keyword in code_lower for keyword in ['def ', 'import ', 'from ', 'if __name__'])
+        is_c = any(keyword in code_lower for keyword in ['#include', 'int main', 'malloc', 'free', 'printf', 'scanf'])
+        is_go = any(keyword in code_lower for keyword in ['package main', 'func ', 'go ', 'goroutine', 'channel', 'import ('])
+        is_rust = any(keyword in code_lower for keyword in ['fn ', 'let mut', 'match ', 'impl ', 'trait ', 'use std::'])
+        is_php = any(keyword in code_lower for keyword in ['<?php', '$_', 'function ', 'class ', 'namespace', 'mysqli_'])
+        is_ruby = any(keyword in code_lower for keyword in ['def ', 'class ', 'module ', 'require ', '@', 'do |', 'end'])
         
         # CRITICAL SECURITY CHECKS
         if "select * from" in code_lower and ("+ " in code or "' + " in code):
@@ -552,6 +852,92 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
                 
             if "range(len(" in code_lower:
                 quality.append("Consider using enumerate() instead of range(len()) for cleaner, more Pythonic iteration.")
+        
+        # C-SPECIFIC ANALYSIS
+        elif is_c:
+            if "malloc(" in code_lower and "free(" not in code_lower:
+                bugs.append("CRITICAL: Memory leak detected - malloc() without corresponding free(). Always free allocated memory.")
+                score -= 3
+                
+            if "strcpy(" in code_lower or "strcat(" in code_lower:
+                security.append("HIGH: Buffer overflow risk - strcpy/strcat are unsafe. Use strncpy/strncat with size limits.")
+                score -= 2
+                
+            if "scanf(" in code_lower and "%s" in code:
+                security.append("CRITICAL: Buffer overflow vulnerability - scanf with %s can overflow buffer. Use fgets() instead.")
+                score -= 3
+                
+            if "printf(" in code_lower and "%" in code and ("user" in code_lower or "input" in code_lower):
+                security.append("HIGH: Format string vulnerability - user input in printf format string. Use puts() or validate input.")
+                score -= 2
+                
+            if "for" in code_lower and "<=" in code and ("malloc" in code_lower or "array" in code_lower):
+                bugs.append("Potential off-by-one error - check array bounds carefully to avoid buffer overflow.")
+                
+        # GO-SPECIFIC ANALYSIS
+        elif is_go:
+            if "go func(" in code_lower and "wg.done" not in code_lower and "channel" not in code_lower:
+                bugs.append("Goroutine leak risk - ensure goroutines have proper termination mechanism (WaitGroup or channels).")
+                
+            if "fmt.sprintf" in code_lower and ("input" in code_lower or "request" in code_lower):
+                security.append("XSS risk in web handlers - sanitize user input before rendering in HTML responses.")
+                
+            if "err != nil" not in code_lower and ("file" in code_lower or "http" in code_lower or "sql" in code_lower):
+                bugs.append("Missing error handling - Go functions return errors that should be checked.")
+                
+            if "for range" in code_lower and "go " in code_lower:
+                performance.append("Consider using worker pools instead of spawning unlimited goroutines in loops.")
+                
+        # RUST-SPECIFIC ANALYSIS
+        elif is_rust:
+            if "unsafe" in code_lower:
+                security.append("CRITICAL: Unsafe block detected - justify necessity and ensure memory safety invariants are maintained.")
+                score -= 2
+                
+            if "unwrap()" in code_lower:
+                bugs.append("Panic risk - avoid unwrap() in production code. Use match, if let, or expect() with descriptive messages.")
+                
+            if "clone()" in code_lower and ("vec" in code_lower or "string" in code_lower):
+                performance.append("Unnecessary cloning detected - consider borrowing (&) instead of cloning for better performance.")
+                
+            if "vec![" in code_lower and "with_capacity" not in code_lower:
+                performance.append("Consider using Vec::with_capacity() when you know the size to avoid reallocations.")
+                
+        # PHP-SPECIFIC ANALYSIS
+        elif is_php:
+            if ("$_get" in code_lower or "$_post" in code_lower) and "filter_" not in code_lower and "htmlspecialchars" not in code_lower:
+                security.append("CRITICAL: XSS vulnerability - sanitize user input from $_GET/$_POST before output.")
+                score -= 3
+                
+            if ("select * from" in code_lower or "insert into" in code_lower) and "prepare" not in code_lower:
+                security.append("CRITICAL: SQL injection vulnerability - use prepared statements instead of string concatenation.")
+                score -= 3
+                
+            if ("password" in code_lower and "==" in code) or ("password_verify" not in code_lower and "password" in code_lower):
+                security.append("HIGH: Insecure password handling - use password_hash() and password_verify() functions.")
+                score -= 2
+                
+            if "foreach" in code_lower and "sql" in code_lower and "where" in code_lower:
+                performance.append("N+1 query problem detected - consider using JOINs or batch queries to reduce database calls.")
+                
+        # RUBY-SPECIFIC ANALYSIS
+        elif is_ruby:
+            if ".new(params)" in code_lower and "permit" not in code_lower:
+                security.append("CRITICAL: Mass assignment vulnerability - use strong parameters with permit() method.")
+                score -= 3
+                
+            if "user.all." in code_lower and "includes" not in code_lower and "joins" not in code_lower:
+                performance.append("N+1 query problem - use includes() or joins() to avoid multiple database queries.")
+                
+            if "/" in code and "users.length" in code_lower and "zero?" not in code_lower:
+                bugs.append("Division by zero risk - check for empty collections before division operations.")
+                
+            if "system(" in code_lower or "exec(" in code_lower:
+                security.append("HIGH: Command injection risk - sanitize input before system calls or use safer alternatives.")
+                score -= 2
+                
+            if "@users.each" in code and "return" in code_lower:
+                bugs.append("Method may not return expected value - each block doesn't affect method return value.")
         
         # GENERAL CODE QUALITY CHECKS
         lines = code.strip().split('\n')
@@ -1060,7 +1446,7 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
             return
             
         try:
-            logger.debug("🧹 Performing post-analysis memory cleanup")
+            logger.debug("Performing post-analysis memory cleanup")
             
             # Reduce aggressive garbage collection - only run occasionally
             current_time = time.time()
@@ -1092,20 +1478,20 @@ PYTHON-SPECIFIC ANALYSIS POINTS:
             self.last_cleanup_time = current_time
             
         except Exception as e:
-            logger.error(f"❌ Error during post-analysis cleanup: {e}")
+            logger.error(f"Error during post-analysis cleanup: {e}")
     
     async def _unload_model_if_needed(self):
         """Unload model if memory pressure is too high"""
         if self.model_loaded and self.model is not None:
             try:
-                logger.warning("🗑️ Unloading AI model due to high memory pressure")
+                logger.warning("Unloading AI model due to high memory pressure")
                 self.model = None
                 self.model_loaded = False
                 # Force garbage collection after model unload
                 gc.collect()
-                logger.info("✅ AI model unloaded successfully")
+                logger.info("AI model unloaded successfully")
             except Exception as e:
-                logger.error(f"❌ Error unloading model: {e}")
+                logger.error(f"Error unloading model: {e}")
     
     def _classify_bug_severity(self, bug_description: str) -> IssueSeverity:
         """

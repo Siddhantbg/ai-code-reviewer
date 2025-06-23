@@ -19,7 +19,9 @@ import {
   Code,
   Shield,
   Layers,
-  ArrowDownToLine
+  ArrowDownToLine,
+  RefreshCw,
+  Play
 } from 'lucide-react'
 import { CodeAnalysisResponse, CodeIssue } from '@/lib/api'
 import { 
@@ -30,6 +32,9 @@ import {
 interface EnhancedResultsProps {
   analysis: CodeAnalysisResponse
   onExport?: (format: 'json' | 'pdf' | 'csv') => void
+  onTryAgain?: () => void
+  onAnalyzeAgain?: () => void
+  isRetrying?: boolean
 }
 
 interface ToolResult {
@@ -126,7 +131,7 @@ function IssueCard({ issue }: { issue: CodeIssue }) {
             <div>
               <h4 className="font-semibold text-sm">{issue.title}</h4>
               <div className="flex items-center gap-2 mt-1">
-                <Badge variant={getSeverityBadgeVariant(issue.severity) as any}>
+                <Badge variant={getSeverityBadgeVariant(issue.severity) as 'default' | 'secondary' | 'destructive' | 'outline' | 'warning' | 'error' | 'critical' | 'success'}>
                   {issue.severity.toUpperCase()}
                 </Badge>
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -143,7 +148,7 @@ function IssueCard({ issue }: { issue: CodeIssue }) {
             </div>
           </div>
           <div className="text-xs text-muted-foreground">
-            {Math.round((issue.confidence || 0) * 100)}% confidence
+            {Math.round(issue.confidence * 100)}% confidence
           </div>
         </div>
       </CardHeader>
@@ -410,8 +415,11 @@ function IssueTypeChart({ issues, metrics, summary, suggestions }: {
   )
 }
 
-export default function EnhancedResults({ analysis, onExport }: EnhancedResultsProps) {
-  // Safe destructuring with defaults to handle incomplete data
+export default function EnhancedResults({ analysis, onExport, onTryAgain, onAnalyzeAgain, isRetrying }: EnhancedResultsProps) {
+  // Debug logging to track component rendering
+  console.log('🔍 EnhancedResults component rendered with analysis:', !!analysis, analysis?.analysis_id)
+  
+  // Safe destructuring with defaults matching backend structure
   const {
     summary = {
       total_issues: 0,
@@ -570,6 +578,30 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {onTryAgain && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={onTryAgain}
+              disabled={isRetrying}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRetrying ? 'animate-spin' : ''}`} />
+              Try Again
+            </Button>
+          )}
+          {onAnalyzeAgain && (
+            <Button 
+              variant="default" 
+              size="sm"
+              onClick={onAnalyzeAgain}
+              disabled={isRetrying}
+              className="flex items-center gap-2"
+            >
+              <Play className="h-4 w-4" />
+              Analyze Again
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => handleExport('json')}>
             <ArrowDownToLine className="h-4 w-4 mr-2" />
             JSON
@@ -696,7 +728,7 @@ export default function EnhancedResults({ analysis, onExport }: EnhancedResultsP
                 {['critical', 'high', 'medium', 'low'].map(severity => (
                   <Badge
                     key={severity}
-                    variant={severityFilter.includes(severity) ? getSeverityBadgeVariant(severity) as any : 'outline'}
+                    variant={severityFilter.includes(severity) ? getSeverityBadgeVariant(severity) as 'default' | 'secondary' | 'destructive' | 'outline' | 'warning' | 'error' | 'critical' | 'success' : 'outline'}
                     className="cursor-pointer"
                     onClick={() => toggleSeverityFilter(severity)}
                   >

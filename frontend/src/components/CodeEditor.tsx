@@ -66,17 +66,52 @@ export default function CodeEditor({
     onChange(newCode)
   }, [onChange])
 
+  const loadExampleCode = useCallback((targetLanguage: string) => {
+    const exampleCode = codeExamples[targetLanguage as keyof typeof codeExamples]
+    
+    // Map language codes to appropriate file extensions
+    const extensionMap: Record<string, string> = {
+      'python': 'py',
+      'javascript': 'js', 
+      'typescript': 'ts',
+      'java': 'java',
+      'cpp': 'cpp',
+      'c': 'c',
+      'go': 'go',
+      'rust': 'rs',
+      'php': 'php',
+      'ruby': 'rb'
+    }
+    
+    if (exampleCode) {
+      const extension = extensionMap[targetLanguage] || targetLanguage
+      return {
+        code: exampleCode,
+        filename: `example.${extension}`,
+        success: true
+      }
+    }
+    
+    return {
+      code: '',
+      filename: '',
+      success: false,
+      error: `No example available for ${targetLanguage}`
+    }
+  }, [])
+
   const handleLanguageChange = useCallback((newLanguage: string) => {
     onLanguageChange(newLanguage)
     setError(null)
     
     // Load example code if current code is empty
     if (!code.trim()) {
-      const exampleCode = EXAMPLE_CODE[newLanguage as keyof typeof EXAMPLE_CODE]
-      if (exampleCode) {
-        onChange(exampleCode)
+      const result = loadExampleCode(newLanguage)
+      if (result.success) {
+        onChange(result.code)
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, onChange, onLanguageChange])
 
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -140,11 +175,14 @@ export default function CodeEditor({
   }, [onChange, onFilenameChange, onLanguageChange, language])
 
   const loadExample = useCallback(() => {
-    const exampleCode = EXAMPLE_CODE[language as keyof typeof EXAMPLE_CODE]
-    if (exampleCode) {
-      onChange(exampleCode)
-      onFilenameChange(`example.${language === 'cpp' ? 'cpp' : language === 'javascript' ? 'js' : language === 'typescript' ? 'ts' : language}`)
+    const result = loadExampleCode(language)
+    if (result.success) {
+      onChange(result.code)
+      onFilenameChange(result.filename)
+    } else {
+      console.warn(result.error)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language, onChange, onFilenameChange])
 
   return (

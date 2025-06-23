@@ -1,12 +1,15 @@
 // frontend/src/lib/websocket.ts
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { io, Socket } from 'socket.io-client'
+import socketIO from 'socket.io-client'
+
+type Socket = SocketIOClient.Socket
 
 interface UseSocketReturn {
   socket: Socket | null
   connected: boolean
   error: string | null
   connecting: boolean
+  reconnectWebSocket: () => void
 }
 
 interface AnalysisProgress {
@@ -188,21 +191,19 @@ export function useSocket(url?: string): UseSocketReturn {
     console.log(`🚀 Attempting to connect to: ${socketUrl} (attempt ${reconnectAttemptsRef.current + 1}/${maxReconnectAttempts}, health: ${connectionHealthRef.current})`)
     
     try {
-      socketRef.current = io(socketUrl, {
+      socketRef.current = socketIO(socketUrl, {
         transports: ['websocket', 'polling'], // Ensure polling fallback
         upgrade: true,
-        timeout: 20000, // Connection timeout increased to 20 seconds
-        pingTimeout: 120000, // 120 seconds - match backend
-        pingInterval: 60000, // 60 seconds - match backend
+        timeout: 45000, // INCREASED from 20s to 45s for AI processing initialization
         forceNew: false,
         autoConnect: true,
         reconnection: false, // Using custom reconnection logic
-        closeOnBeforeunload: false,
         query: {
           clientType: 'react-frontend',
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          supportsLongAnalysis: true // Indicate support for long analysis operations
         }
-      })
+      } as any) // Temporary fix for TypeScript compatibility
 
       const socket = socketRef.current
 
@@ -235,7 +236,7 @@ export function useSocket(url?: string): UseSocketReturn {
         startHeartbeatMonitoring()
       })
 
-      socket.on('disconnect', (reason, details) => {
+      socket.on('disconnect', (reason: string, details?: any) => {
         console.log('🔌 WebSocket disconnected:', reason, details)
         setConnected(false)
         setConnecting(false)
@@ -287,7 +288,7 @@ export function useSocket(url?: string): UseSocketReturn {
         }
       })
 
-      socket.on('connect_error', (err) => {
+      socket.on('connect_error', (err: any) => {
         console.error('❌ WebSocket connection error:', err)
         setConnected(false)
         setConnecting(false)
@@ -339,7 +340,7 @@ export function useSocket(url?: string): UseSocketReturn {
         }
       })
 
-      socket.on('error', (err) => {
+      socket.on('error', (err: any) => {
         console.error('❌ WebSocket error:', err)
         setError(`Socket error: ${err.message || err}`)
       })
@@ -355,7 +356,7 @@ export function useSocket(url?: string): UseSocketReturn {
         lastPingTimeRef.current = Date.now()
       })
 
-      socket.on('notification', (data) => {
+      socket.on('notification', (data: any) => {
         console.log('📢 Notification:', data)
       })
 
@@ -378,7 +379,13 @@ export function useSocket(url?: string): UseSocketReturn {
     heartbeatIntervalRef.current = setInterval(() => {
       const now = Date.now()
       const timeSinceLastPing = now - lastPingTimeRef.current
-      const pingTimeoutMs = 120000 // 120 seconds to match backend
+      
+      // Check if any analysis is currently running to adjust timeout
+      // Note: analysisStatus comes from useAnalysisSocket hook, this is just for heartbeat monitoring
+      const hasRunningAnalysis = false // Simplified for heartbeat - analysis-aware timeout handled elsewhere
+      
+      // Use longer timeout during analysis to prevent disconnection during heavy processing
+      const pingTimeoutMs = hasRunningAnalysis ? 300000 : 180000 // 5 minutes during analysis, 3 minutes normal
       
       if (timeSinceLastPing > pingTimeoutMs) {
         console.warn('⚠️ Connection appears stale, no ping/pong activity detected')
@@ -394,10 +401,11 @@ export function useSocket(url?: string): UseSocketReturn {
           socketRef.current.disconnect()
         }
       } else {
-        console.log(`📡 Connection healthy - last ping ${timeSinceLastPing}ms ago`)
+        const healthyThreshold = hasRunningAnalysis ? 120000 : 70000 // More lenient during analysis
+        console.log(`📡 Connection healthy - last ping ${timeSinceLastPing}ms ago (analysis active: ${hasRunningAnalysis})`)
         
         // Reset failure count on healthy ping
-        if (timeSinceLastPing < 70000) { // Well within healthy range
+        if (timeSinceLastPing < healthyThreshold) {
           if (consecutiveFailuresRef.current > 0) {
             consecutiveFailuresRef.current = Math.max(0, consecutiveFailuresRef.current - 1)
             updateConnectionHealth()
@@ -461,11 +469,34 @@ export function useSocket(url?: string): UseSocketReturn {
     }
   }, [connect, disconnect])
 
+  // Expose reconnection function for manual use
+  const reconnectWebSocket = useCallback(() => {
+    console.log('🔄 Manual reconnection requested')
+    if (socketRef.current?.connected) {
+      console.log('🔌 Socket already connected')
+      return
+    }
+    
+    // Clear any existing reconnection attempts
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current)
+      reconnectTimeoutRef.current = null
+    }
+    
+    // Reset manual disconnect flag
+    isManualDisconnect.current = false
+    
+    // Force a new connection attempt
+    reconnectAttemptsRef.current = 0
+    connect()
+  }, [connect])
+
   return {
     socket: socketRef.current,
     connected,
     error,
-    connecting
+    connecting,
+    reconnectWebSocket
   }
 }
 
@@ -512,11 +543,11 @@ export function useAnalysisSocket() {
       // Reset analysis timeout on progress update
       if (analysisTimeoutsRef.current[data.analysisId]) {
         clearTimeout(analysisTimeoutsRef.current[data.analysisId])
-        // Set a new timeout (10 minutes for long analyses)
+        // Set a new timeout (15 minutes for long analyses - complex AI processing)
         analysisTimeoutsRef.current[data.analysisId] = setTimeout(() => {
           console.warn(`⏰ Analysis ${data.analysisId} timed out`)
           handleAnalysisTimeout(data.analysisId)
-        }, 600000) // 10 minutes
+        }, 900000) // INCREASED from 10 minutes to 15 minutes for complex AI processing
       }
     }
 
@@ -529,7 +560,7 @@ export function useAnalysisSocket() {
         delete analysisTimeoutsRef.current[data.analysisId]
       }
       
-      // Update status with result
+      // Update status with result first
       setAnalysisStatus(prev => ({
         ...prev,
         [data.analysisId]: {
@@ -541,11 +572,15 @@ export function useAnalysisSocket() {
         }
       }))
       
-      // Call completion callback if exists
+      // Call completion callback with delay to ensure state propagates
       const callback = completionCallbacksRef.current[data.analysisId]
       if (callback) {
-        callback(data.result)
-        delete completionCallbacksRef.current[data.analysisId]
+        console.log('🔄 Calling analysis completion callback for:', data.analysisId)
+        setTimeout(() => {
+          callback(data.result)
+          delete completionCallbacksRef.current[data.analysisId]
+          console.log('🔄 Analysis completion callback executed and cleaned up for:', data.analysisId)
+        }, 10) // Small delay for state batching
       }
     }
 
@@ -599,7 +634,7 @@ export function useAnalysisSocket() {
       }
     }
     
-    const handleReconnect = () => {
+    const handleReconnect = async () => {
       console.log('🔄 WebSocket reconnected - checking for pending analyses')
       
       // Check if we have any running analyses that might have completed during disconnection
@@ -611,6 +646,62 @@ export function useAnalysisSocket() {
           socket.emit('check_analysis_status', { analysisId })
         }
       })
+      
+      // Also check for any persisted results that might have completed during disconnection
+      try {
+        // Import API client dynamically to avoid circular dependencies
+        const { api } = await import('./api')
+        
+        // Get session ID (using socket ID as session identifier)
+        const sessionId = socket.id
+        if (sessionId) {
+          console.log('🔍 Checking for persisted analysis results after reconnection')
+          
+          const persistedAnalyses = await api.getClientAnalyses(sessionId, 10)
+          if (persistedAnalyses.success && persistedAnalyses.analyses) {
+            // Check for completed analyses that we don't have in memory
+            for (const analysisInfo of persistedAnalyses.analyses) {
+              if (analysisInfo.status === 'completed' && analysisInfo.has_result) {
+                const currentStatus = analysisStatus[analysisInfo.analysis_id]
+                
+                // If we don't have this analysis in memory, or it's still running, retrieve the result
+                if (!currentStatus || currentStatus.status === 'running' || currentStatus.status === 'pending') {
+                  console.log(`📤 Recovering completed analysis: ${analysisInfo.analysis_id}`)
+                  
+                  try {
+                    const resultResponse = await api.getAnalysisResult(analysisInfo.analysis_id, sessionId)
+                    if (resultResponse.success && resultResponse.result) {
+                      // Trigger the completion callback manually
+                      const callback = completionCallbacksRef.current[analysisInfo.analysis_id]
+                      if (callback) {
+                        console.log('🔄 Calling recovered analysis completion callback')
+                        callback(resultResponse.result)
+                        delete completionCallbacksRef.current[analysisInfo.analysis_id]
+                      } else {
+                        // Update status directly if no callback
+                        setAnalysisStatus(prev => ({
+                          ...prev,
+                          [analysisInfo.analysis_id]: {
+                            ...prev[analysisInfo.analysis_id],
+                            status: 'completed',
+                            progress: 100,
+                            message: 'Analysis recovered from persistence',
+                            result: resultResponse.result
+                          }
+                        }))
+                      }
+                    }
+                  } catch (error) {
+                    console.warn(`⚠️ Failed to recover analysis ${analysisInfo.analysis_id}:`, error)
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to check persisted analyses after reconnection:', error)
+      }
     }
 
     // Persistent event listeners
@@ -667,11 +758,11 @@ export function useAnalysisSocket() {
         completionCallbacksRef.current[analysisData.analysisId] = onComplete
       }
       
-      // Set initial timeout (2 minutes for initial response)
+      // Set initial timeout (5 minutes for initial response - AI model loading can take time)
       analysisTimeoutsRef.current[analysisData.analysisId] = setTimeout(() => {
         console.warn(`⏰ Analysis ${analysisData.analysisId} initial timeout`)
         handleAnalysisTimeout(analysisData.analysisId)
-      }, 120000) // 2 minutes
+      }, 300000) // INCREASED from 2 minutes to 5 minutes for AI model loading
       
       socket.emit('start_analysis', analysisData)
       setAnalysisStatus(prev => ({

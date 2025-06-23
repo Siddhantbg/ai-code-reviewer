@@ -1,0 +1,108 @@
+{
+  "analysis_id": "analysis-1750659659869-44p8nv4",
+  "client_session_id": "d-N64m7Ed80JYcnGAAAD",
+  "client_ip": "127.0.0.1",
+  "code_hash": "-1671375349397714802",
+  "result_data": {
+    "analysis_id": "analysis-1750659659869-44p8nv4",
+    "timestamp": "2025-06-23T06:22:24.464786Z",
+    "language": "python",
+    "filename": "example.py",
+    "processing_time_ms": 84569.15020942688,
+    "issues": [
+      {
+        "id": "bug_68a60a33",
+        "type": "bug",
+        "severity": "low",
+        "title": "Bug #1",
+        "description": "Code structure appears sound with no significant logical issues identified.",
+        "line_number": null,
+        "column_number": null,
+        "code_snippet": null,
+        "suggestion": "Fix this bug to prevent unexpected behavior.",
+        "explanation": null,
+        "confidence": 0.8
+      },
+      {
+        "id": "security_0281468f",
+        "type": "security",
+        "severity": "low",
+        "title": "Security Issue #1",
+        "description": "Security analysis complete - no significant issues found. Continue following secure coding practices and principle of least privilege.",
+        "line_number": null,
+        "column_number": null,
+        "code_snippet": null,
+        "suggestion": "Address this security vulnerability immediately.",
+        "explanation": null,
+        "confidence": 0.8
+      },
+      {
+        "id": "perf_c92c8597",
+        "type": "performance",
+        "severity": "low",
+        "title": "Performance Improvement #1",
+        "description": "Performance analysis complete - no significant issues found. For production optimization, consider: caching strategies, async operations, and profiling tools.",
+        "line_number": null,
+        "column_number": null,
+        "code_snippet": null,
+        "suggestion": "Consider this optimization for better performance.",
+        "explanation": null,
+        "confidence": 0.7
+      },
+      {
+        "id": "quality_d2ffda10",
+        "type": "style",
+        "severity": "low",
+        "title": "Code Quality Suggestion #1",
+        "description": "Add comprehensive docstrings following Google or NumPy style for better documentation and IDE support.",
+        "line_number": null,
+        "column_number": null,
+        "code_snippet": null,
+        "suggestion": "Improve code quality and maintainability.",
+        "explanation": null,
+        "confidence": 0.7
+      },
+      {
+        "id": "quality_9c84dad3",
+        "type": "style",
+        "severity": "low",
+        "title": "Code Quality Suggestion #2",
+        "description": "Add type hints for parameters and return values to improve code clarity and enable better static analysis.",
+        "line_number": null,
+        "column_number": null,
+        "code_snippet": null,
+        "suggestion": "Improve code quality and maintainability.",
+        "explanation": null,
+        "confidence": 0.7
+      }
+    ],
+    "metrics": {
+      "lines_of_code": 5,
+      "complexity_score": 7.0,
+      "maintainability_index": 70.0,
+      "test_coverage": null,
+      "duplication_percentage": 0.0
+    },
+    "summary": {
+      "total_issues": 5,
+      "critical_issues": 0,
+      "high_issues": 0,
+      "medium_issues": 0,
+      "low_issues": 5,
+      "overall_score": 7.0,
+      "recommendation": "Code analysis shows good practices with targeted suggestions for professional development and best practices. Address identified issues for better reliability."
+    },
+    "suggestions": [
+      "Add comprehensive docstrings following Google or NumPy style for better documentation and IDE support.",
+      "Add type hints for parameters and return values to improve code clarity and enable better static analysis.",
+      "Performance: Performance analysis complete - no significant issues found. For production optimization, consider: caching strategies, async operations, and profiling tools.",
+      "Security: Security analysis complete - no significant issues found. Continue following secure coding practices and principle of least privilege."
+    ]
+  },
+  "status": "completed",
+  "created_at": 1750659744.464818,
+  "completed_at": 1750659744.4648187,
+  "ttl_seconds": 3600,
+  "retrieval_count": 0,
+  "max_retrievals": 10
+}

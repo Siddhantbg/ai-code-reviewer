@@ -96,6 +96,54 @@ class CodeAnalyzerService:
                     (r"gets\(", "Avoid gets() - use fgets() instead", IssueType.SECURITY, IssueSeverity.CRITICAL),
                     (r"strcpy\(", "Avoid strcpy() - HIGH risk: buffer overflow vulnerability. Use strncpy() or safer alternatives.", IssueType.SECURITY, IssueSeverity.HIGH),
                 ]
+            },
+            SupportedLanguage.C: {
+                "common_issues": [
+                    (r"malloc\(.*\)(?!.*free)", "Memory allocated with malloc() should be freed with free() to prevent memory leaks", IssueType.BUG, IssueSeverity.HIGH),
+                    (r"strcpy\(", "CRITICAL: strcpy() is unsafe - use strncpy() with size limits to prevent buffer overflow", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"strcat\(", "CRITICAL: strcat() is unsafe - use strncat() with size limits to prevent buffer overflow", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"gets\(", "CRITICAL: gets() is extremely unsafe - use fgets() instead to prevent buffer overflow", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"scanf\([^)]*%s", "HIGH: scanf with %s is vulnerable to buffer overflow - use fgets() or limit input size", IssueType.SECURITY, IssueSeverity.HIGH),
+                    (r"printf\([^)]*%[^sdioxX\s]*\)", "Potential format string vulnerability - validate format strings", IssueType.SECURITY, IssueSeverity.MEDIUM),
+                ]
+            },
+            SupportedLanguage.GO: {
+                "common_issues": [
+                    (r"go\s+func\(", "Goroutine created - ensure proper synchronization and termination", IssueType.BUG, IssueSeverity.MEDIUM),
+                    (r"fmt\.Sprint.*\+", "Consider using fmt.Sprintf() for string formatting instead of concatenation", IssueType.PERFORMANCE, IssueSeverity.LOW),
+                    (r"err\s*!=\s*nil.*return\s*$", "Error handling: consider returning the error instead of ignoring it", IssueType.BUG, IssueSeverity.MEDIUM),
+                    (r"range.*chan", "Range over channel - ensure channel is properly closed to prevent goroutine leaks", IssueType.BUG, IssueSeverity.MEDIUM),
+                    (r"http\.Get\(.*\+", "Potential HTTP injection - validate and sanitize URL parameters", IssueType.SECURITY, IssueSeverity.HIGH),
+                ]
+            },
+            SupportedLanguage.RUST: {
+                "common_issues": [
+                    (r"unsafe\s*{", "CRITICAL: Unsafe block detected - ensure memory safety invariants are maintained", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"\.unwrap\(\)", "Avoid unwrap() in production - use match, if let, or expect() with descriptive messages", IssueType.BUG, IssueSeverity.MEDIUM),
+                    (r"\.clone\(\)", "Consider using references (&) instead of cloning for better performance", IssueType.PERFORMANCE, IssueSeverity.LOW),
+                    (r"Vec::new\(\)(?!.*with_capacity)", "Consider using Vec::with_capacity() when size is known to avoid reallocations", IssueType.PERFORMANCE, IssueSeverity.LOW),
+                    (r"panic!\(", "Avoid panic! in library code - use Result type for error handling instead", IssueType.BUG, IssueSeverity.MEDIUM),
+                ]
+            },
+            SupportedLanguage.PHP: {
+                "common_issues": [
+                    (r"\$_GET\[.*\](?!.*filter_|.*htmlspecialchars)", "CRITICAL: XSS vulnerability - sanitize user input from $_GET", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"\$_POST\[.*\](?!.*filter_|.*htmlspecialchars)", "CRITICAL: XSS vulnerability - sanitize user input from $_POST", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"SELECT.*FROM.*\..*\$", "CRITICAL: SQL injection vulnerability - use prepared statements", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"password.*==", "HIGH: Insecure password comparison - use password_verify() function", IssueType.SECURITY, IssueSeverity.HIGH),
+                    (r"eval\(", "CRITICAL: Code injection risk - avoid eval() function", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"foreach.*mysql_query", "Performance: N+1 query problem - consider using JOINs", IssueType.PERFORMANCE, IssueSeverity.MEDIUM),
+                ]
+            },
+            SupportedLanguage.RUBY: {
+                "common_issues": [
+                    (r"\.new\(params\)(?!.*permit)", "CRITICAL: Mass assignment vulnerability - use strong parameters with permit()", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"User\.all\..*where", "Performance: N+1 query problem - use includes() or joins()", IssueType.PERFORMANCE, IssueSeverity.MEDIUM),
+                    (r"system\(.*\$", "HIGH: Command injection risk - sanitize input before system calls", IssueType.SECURITY, IssueSeverity.HIGH),
+                    (r"eval\(", "CRITICAL: Code injection risk - avoid eval() function", IssueType.SECURITY, IssueSeverity.CRITICAL),
+                    (r"/.*\.length(?!.*zero\?)", "Division by zero risk - check for empty collections", IssueType.BUG, IssueSeverity.MEDIUM),
+                    (r"@\w+\.each.*return", "Method return issue - each block doesn't affect method return value", IssueType.BUG, IssueSeverity.MEDIUM),
+                ]
             }
         }
     

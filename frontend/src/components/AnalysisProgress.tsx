@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { XCircle, Clock, AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
-import { useSocket } from '@/lib/websocket'
+import { useSocket, useAnalysisSocket } from '@/lib/websocket'
 
 interface AnalysisProgressProps {
   analysisId: string
@@ -102,6 +102,7 @@ export default function AnalysisProgress({
   })
 
   const { socket, connected } = useSocket()
+  const { analysisStatus, getAnalysisStatus } = useAnalysisSocket()
 
   // Calculate estimated time based on code size and language
   const getInitialEstimate = (): number => {
@@ -130,6 +131,9 @@ export default function AnalysisProgress({
     
     return baseTime + (sizeFactor * langFactor)
   }
+
+  // Note: Removed duplicate centralized status sync to prevent double event handling
+  // The component now relies only on direct WebSocket events for real-time updates
 
   useEffect(() => {
     if (!socket || !connected) return
@@ -180,8 +184,9 @@ export default function AnalysisProgress({
 
     initializeTools()
 
-    // Listen for progress updates
-    socket.on('analysis_progress', (data: any) => {
+    // Define handlers with references for proper cleanup
+    const handleProgress = (data: any) => {
+      console.log('🔍 WebSocket Event: analysis_progress received')
       if (data.analysisId !== analysisId) return
 
       setProgress(prev => {
@@ -228,12 +233,15 @@ export default function AnalysisProgress({
           tools: updatedTools
         }
       })
-    })
+    }
 
-    // Listen for analysis completion
-    socket.on('analysis_complete', (data: any) => {
+    const handleComplete = (data: any) => {
+      console.log('🔍 WebSocket Event: analysis_complete received in AnalysisProgress')
       if (data.analysisId !== analysisId) return
-
+      
+      console.log('🔄 AnalysisProgress: analysis_complete event received', data.analysisId, 'current:', analysisId)
+      console.log('🔄 AnalysisProgress: Updating state to completed')
+      
       setProgress(prev => ({
         ...prev,
         status: 'completed',
@@ -243,21 +251,32 @@ export default function AnalysisProgress({
         tools: prev.tools.map(tool => ({ ...tool, status: 'completed', progress: 100 }))
       }))
 
-      // Notify parent component
-      onComplete(analysisId)
-    })
+      // Notify parent component with a small delay to ensure state is updated
+      setTimeout(() => {
+        console.log('🔄 AnalysisProgress: Calling onComplete callback')
+        onComplete(analysisId)
+      }, 10) // Small delay to ensure state batching
+    }
 
-    // Listen for analysis errors
-    socket.on('analysis_error', (data: any) => {
+    const handleError = (data: any) => {
+      console.log('🔍 WebSocket Event: analysis_error received in AnalysisProgress')
       if (data.analysisId !== analysisId) return
-
+      
+      console.log('🔄 AnalysisProgress: analysis_error event received', data.analysisId, 'current:', analysisId)
+      console.log('🔄 AnalysisProgress: Updating state to error')
+      
       setProgress(prev => ({
         ...prev,
         status: 'error',
         error: data.error,
         endTime: Date.now()
       }))
-    })
+    }
+
+    // Register event listeners
+    socket.on('analysis_progress', handleProgress)
+    socket.on('analysis_complete', handleComplete)
+    socket.on('analysis_error', handleError)
 
     // Simulate progress for demo purposes
     // In a real app, this would be removed and rely on actual WebSocket events
@@ -361,11 +380,11 @@ export default function AnalysisProgress({
     // Start simulation
     const cleanup = simulateProgress()
     
-    // Cleanup function
+    // Cleanup function with specific handler references
     return () => {
-      socket.off('analysis_progress')
-      socket.off('analysis_complete')
-      socket.off('analysis_error')
+      socket.off('analysis_progress', handleProgress)
+      socket.off('analysis_complete', handleComplete)
+      socket.off('analysis_error', handleError)
       cleanup()
     }
   }, [socket, connected, analysisId, language, codeSize, onComplete])

@@ -11,12 +11,14 @@ import AnalysisProgress from '@/components/AnalysisProgress'
 import EpicLoader from '@/components/EpicLoader'
 import CircuitBoardCity from '@/components/CircuitBoardCity'
 import ConnectionMonitor, { ConnectionStatus } from '@/components/ConnectionMonitor'
+import ErrorBoundary from '@/components/ErrorBoundary'
+import { PersistentAnalyses } from '@/components/PersistentAnalyses'
 import { apiClient, CodeAnalysisResponse } from '@/lib/api'
 import { useSocket, useAnalysisSocket } from '@/lib/websocket'
 import { useToast } from '@/hooks/use-toast'
 import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
-import { Loader2, Play, AlertCircle, CheckCircle, Github, Settings, X, History, ChevronRight, Keyboard, Code, Zap, BarChart3, FileText, Moon, Sun } from 'lucide-react'
+import { Loader2, Play, AlertCircle, CheckCircle, Github, Settings, X, History, ChevronRight, Keyboard, Code, Zap, BarChart3, FileText, Moon, Sun, RefreshCw, AlertTriangle } from 'lucide-react'
 import { getLanguageFromFilename } from '@/lib/utils'
 import { toast } from 'react-hot-toast'
 
@@ -87,7 +89,7 @@ export default function HomePage() {
   const editorRef = useRef<HTMLDivElement>(null)
   
   // WebSocket connection with analysis support
-  const { socket, connected: wsConnected, connecting: wsConnecting, error: wsError } = useSocket()
+  const { socket, connected: wsConnected, connecting: wsConnecting, error: wsError, reconnectWebSocket } = useSocket()
   const { 
     startAnalysis, 
     waitForAnalysis, 
@@ -100,13 +102,14 @@ export default function HomePage() {
   // Keyboard shortcuts reference
   const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false)
   
-  // Connection management
+  
+  // Connection management with retry logic
   const handleReconnect = useCallback(() => {
     if (socket && !wsConnected) {
       console.log('🔄 Manual reconnection attempt')
-      socket.connect()
+      reconnectWebSocket()
     }
-  }, [socket, wsConnected])
+  }, [socket, wsConnected, reconnectWebSocket])
   
   const handleRetryAnalysis = useCallback(() => {
     if (currentAnalysisId) {
@@ -118,7 +121,7 @@ export default function HomePage() {
     }
   }, [currentAnalysisId])
 
-  // Initialize animations and check connection
+  // Enhanced connection check with reconnection logic
   useEffect(() => {
     // Initial setup - hide main content until loader completes
     if (containerRef.current) {
@@ -129,19 +132,31 @@ export default function HomePage() {
       try {
         await apiClient.healthCheck()
         setIsConnected(true)
+        
+        // If WebSocket is not connected but backend is available, attempt reconnection
+        if (!wsConnected && !wsConnecting) {
+          console.log('🔄 Backend is healthy but WebSocket disconnected - attempting reconnection')
+          reconnectWebSocket()
+        }
       } catch (err) {
         setIsConnected(false)
         console.error('Backend connection failed:', err)
+        
+        // Show reconnection toast after multiple failures
+        const errorMessage = err instanceof Error ? err.message : 'Connection failed'
+        if (errorMessage.includes('ECONNREFUSED')) {
+          toast.error('Backend server is not running. Please start the server.')
+        }
       }
     }
     
     checkConnection()
     
-    // Setup interval to periodically check connection
+    // Setup interval to periodically check connection with reconnection attempts
     const interval = setInterval(checkConnection, 30000) // Check every 30 seconds
     
     return () => clearInterval(interval)
-  }, [])
+  }, [wsConnected, wsConnecting, reconnectWebSocket])
   
   // Track showLoader state changes with useEffect
   useEffect(() => {
@@ -247,17 +262,153 @@ export default function HomePage() {
     })
   }
 
+  // Helper function to add analysis result to history
+  const addToHistory = useCallback((analysisResult: CodeAnalysisResponse) => {
+    const historyItem: AnalysisHistoryItem = {
+      id: analysisResult.analysis_id,
+      timestamp: new Date().toISOString(),
+      language,
+      filename: filename || undefined,
+      score: analysisResult.summary.overall_score,
+      issueCount: analysisResult.summary.total_issues
+    }
+    
+    setAnalysisHistory(prev => [historyItem, ...prev.slice(0, 9)])
+  }, [language, filename])
+
+  // Enhanced validation function to ensure analysis response matches backend structure
+  const validateAnalysisResponse = useCallback((response: any, source: string): boolean => {
+    console.log('🔍 Validating analysis response from:', source)
+    console.log('📋 Response structure:', response)
+
+    const requiredFields = {
+      analysis_id: 'string',
+      timestamp: 'string',
+      language: 'string',
+      processing_time_ms: 'number',
+      summary: 'object',
+      issues: 'array',
+      metrics: 'object',
+      suggestions: 'array'
+    }
+
+    const requiredSummaryFields = {
+      total_issues: 'number',
+      critical_issues: 'number',
+      high_issues: 'number',
+      medium_issues: 'number',
+      low_issues: 'number',
+      overall_score: 'number',
+      recommendation: 'string'  // Required in backend
+    }
+
+    const requiredMetricsFields = {
+      lines_of_code: 'number',
+      complexity_score: 'number',
+      maintainability_index: 'number',
+      duplication_percentage: 'number'
+      // test_coverage is optional
+    }
+
+    // Check main fields
+    for (const [field, expectedType] of Object.entries(requiredFields)) {
+      const actualType = expectedType === 'array' ? 'array' : typeof response[field]
+      const isArray = Array.isArray(response[field])
+      
+      if (expectedType === 'array' && !isArray) {
+        console.error(`❌ ${source} - Invalid ${field}: expected array, got ${actualType}`)
+        return false
+      } else if (expectedType !== 'array' && actualType !== expectedType) {
+        console.error(`❌ ${source} - Invalid ${field}: expected ${expectedType}, got ${actualType}`)
+        return false
+      }
+    }
+
+    // Check summary fields
+    if (response.summary) {
+      for (const [field, expectedType] of Object.entries(requiredSummaryFields)) {
+        if (typeof response.summary[field] !== expectedType) {
+          console.error(`❌ ${source} - Invalid summary.${field}: expected ${expectedType}, got ${typeof response.summary[field]}`)
+          return false
+        }
+      }
+    }
+
+    // Check metrics fields
+    if (response.metrics) {
+      for (const [field, expectedType] of Object.entries(requiredMetricsFields)) {
+        if (typeof response.metrics[field] !== expectedType) {
+          console.error(`❌ ${source} - Invalid metrics.${field}: expected ${expectedType}, got ${typeof response.metrics[field]}`)
+          return false
+        }
+      }
+    }
+
+    // Check issues structure and required fields
+    if (Array.isArray(response.issues)) {
+      for (let i = 0; i < Math.min(response.issues.length, 3); i++) {
+        const issue = response.issues[i]
+        const requiredIssueFields = ['id', 'type', 'severity', 'title', 'description', 'confidence']
+        
+        for (const field of requiredIssueFields) {
+          if (issue[field] === undefined || issue[field] === null) {
+            console.error(`❌ ${source} - Issue ${i} missing required field: ${field}`)
+            return false
+          }
+        }
+        
+        // Validate confidence is a number
+        if (typeof issue.confidence !== 'number' || issue.confidence < 0 || issue.confidence > 1) {
+          console.error(`❌ ${source} - Issue ${i} has invalid confidence: ${issue.confidence} (expected 0-1)`)
+          return false
+        }
+      }
+    }
+
+    console.log(`✅ ${source} - Analysis response structure is valid`)
+    return true
+  }, [])
+
   const handleAnalyze = useCallback(async () => {
     if (!code.trim()) {
       setError('Please enter some code to analyze')
       return
     }
 
-    setIsAnalyzing(true)
+    // Comprehensive state reset before starting new analysis
+    setIsAnalyzing(false) // Reset first to prevent race conditions
     setError(null)
     setAnalysis(null)
+    setCurrentAnalysisId(null)
     
-    // Generate a unique analysis ID
+    // Connection retry logic before starting analysis
+    if (!isConnected) {
+      console.log('🔄 Backend not connected - checking connection before analysis')
+      try {
+        await apiClient.healthCheck()
+        setIsConnected(true)
+      } catch (err) {
+        setError('Backend server is not available. Please start the server and try again.')
+        return
+      }
+    }
+    
+    // If WebSocket is not connected, attempt reconnection
+    if (!wsConnected && isConnected) {
+      console.log('🔄 WebSocket not connected - attempting reconnection before analysis')
+      reconnectWebSocket()
+      
+      // Wait a moment for reconnection
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      
+      // Check if reconnection was successful
+      if (!wsConnected) {
+        console.log('⚠️ WebSocket reconnection failed - falling back to REST API')
+      }
+    }
+    
+    // Now set analyzing state and generate ID
+    setIsAnalyzing(true)
     const analysisId = `analysis-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
     setCurrentAnalysisId(analysisId)
 
@@ -317,74 +468,107 @@ export default function HomePage() {
         config: analysisConfig
       })
       
-      // If using WebSockets, emit analysis request
-      if (socket && wsConnected) {
-        socket.emit('start_analysis', {
-          analysisId,
-          code,
-          language,
-          filename: filename || undefined,
-          analysis_type: backendAnalysisType, // Use mapped value
-          include_suggestions: true,
-          include_explanations: true,
-          severity_threshold: severityThreshold,
-          config: analysisConfig
-        })
-        
-        // Listen for completion
-        const handleComplete = (data: { analysisId: string; result: CodeAnalysisResponse }) => {
-          if (data.analysisId === analysisId) {
-            setAnalysis(data.result)
-            setIsAnalyzing(false)
-            setCurrentAnalysisId(null)
+      // Try WebSocket analysis first, fallback to REST API if it fails
+      try {
+        if (socket && wsConnected) {
+          console.log('🚀 Using WebSocket for analysis via useAnalysisSocket hook')
+          
+          // Use the centralized analysis hook
+          const success = startAnalysis({
+            analysisId,
+            code,
+            language,
+            filename: filename || undefined,
+            analysis_type: backendAnalysisType,
+            include_suggestions: true,
+            include_explanations: true,
+            severity_threshold: severityThreshold,
+            config: analysisConfig
+          }, (result) => {
+            // Handle completion callback from useAnalysisSocket
+            console.log('🔄 Analysis completion callback received:', !!result)
             
-            // Add to history
-            const historyItem: AnalysisHistoryItem = {
-              id: data.result.analysis_id,
-              timestamp: new Date().toISOString(),
-              language,
-              filename: filename || undefined,
-              score: data.result.summary.overall_score,
-              issueCount: data.result.summary.total_issues
+            // Batch all state updates together to ensure proper re-renders
+            if (result) {
+              console.log('✅ Analysis completed via useAnalysisSocket hook')
+              if (validateAnalysisResponse(result, 'useAnalysisSocket Hook')) {
+                // Batch all successful completion state updates
+                setAnalysis(result)
+                setIsAnalyzing(false)
+                setCurrentAnalysisId(null)
+                setError(null) // Clear any previous errors
+                addToHistory(result)
+                console.log('🔄 State updates batched for successful analysis')
+              } else {
+                console.error('❌ useAnalysisSocket response validation failed')
+                // Batch error state updates
+                setError('Invalid analysis response format from WebSocket hook')
+                setIsAnalyzing(false)
+                setCurrentAnalysisId(null)
+              }
+            } else {
+              console.error('❌ Analysis failed via useAnalysisSocket hook')
+              // Batch error state updates
+              setError('Analysis failed via WebSocket hook')
+              setIsAnalyzing(false)
+              setCurrentAnalysisId(null)
             }
-            
-            setAnalysisHistory(prev => [historyItem, ...prev.slice(0, 9)])
-            
-            // Clean up listener
-            socket.off('analysis_complete', handleComplete)
+          })
+          
+          if (!success) {
+            console.warn('⚠️ Failed to start WebSocket analysis - falling back to REST API')
+            throw new Error('WebSocket analysis start failed')
           }
+          
+          // WebSocket analysis started successfully, return early
+          return
+        } else {
+          console.log('🔄 WebSocket not available, using REST API')
+          throw new Error('WebSocket not connected')
         }
-        
-        socket.on('analysis_complete', handleComplete)
-      } else {
-        // Fallback to REST API
-        const response = await apiClient.analyzeCode({
-          code,
-          language,
-          filename: filename || undefined,
-          analysis_type: backendAnalysisType, // Use mapped value
-          include_suggestions: true,
-          include_explanations: true,
-          severity_threshold: severityThreshold,
-          config: analysisConfig
-        })
-
-        setAnalysis(response)
-        
-        // Add to history
-        const historyItem: AnalysisHistoryItem = {
-          id: response.analysis_id,
-          timestamp: new Date().toISOString(),
-          language,
-          filename: filename || undefined,
-          score: response.summary.overall_score,
-          issueCount: response.summary.total_issues
-        }
-        
-        setAnalysisHistory(prev => [historyItem, ...prev.slice(0, 9)])
-        setIsAnalyzing(false)
-        setCurrentAnalysisId(null)
+      } catch (wsError) {
+        console.warn('⚠️ WebSocket analysis failed, falling back to REST API:', wsError)
+        toast.error('WebSocket analysis failed - switching to REST API')
       }
+      
+      // REST API fallback
+      console.log('🔄 Using REST API for analysis')
+      const response = await apiClient.analyzeCode({
+        code,
+        language,
+        filename: filename || undefined,
+        analysis_type: backendAnalysisType, // Use mapped value
+        include_suggestions: true,
+        include_explanations: true,
+        severity_threshold: severityThreshold,
+        config: analysisConfig
+      })
+
+      console.log('🔍 Direct REST API - Analysis response structure:', {
+        hasAnalysisId: !!response.analysis_id,
+        hasTimestamp: !!response.timestamp,
+        hasLanguage: !!response.language,
+        hasSummary: !!response.summary,
+        summaryKeys: response.summary ? Object.keys(response.summary) : [],
+        hasIssues: Array.isArray(response.issues),
+        issuesCount: response.issues?.length || 0,
+        hasMetrics: !!response.metrics,
+        metricsKeys: response.metrics ? Object.keys(response.metrics) : [],
+        hasSuggestions: Array.isArray(response.suggestions),
+        suggestionsCount: response.suggestions?.length || 0,
+        processingTimeMs: response.processing_time_ms
+      })
+      
+      if (validateAnalysisResponse(response, 'Direct REST API')) {
+        setAnalysis(response)
+      } else {
+        console.error('❌ Direct REST API response validation failed')
+        setError('Invalid analysis response format from REST API')
+        return
+      }
+      addToHistory(response)
+      setIsAnalyzing(false)
+      setCurrentAnalysisId(null)
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to analyze code. Please try again.'
       setError(errorMessage)
@@ -394,7 +578,7 @@ export default function HomePage() {
       
       toast.error('Analysis failed: ' + errorMessage)
     }
-  }, [code, language, filename, analysisMethod, analysisConfig, socket, wsConnected])
+  }, [code, language, filename, analysisMethod, analysisConfig, socket, wsConnected, isConnected, reconnectWebSocket, addToHistory, validateAnalysisResponse])
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -530,14 +714,39 @@ export default function HomePage() {
     setHistoryOpen(false)
   }, [])
 
+  // Retry functions for analysis results
+  const handleTryAgain = useCallback(() => {
+    console.log('🔄 Try Again clicked - retrying current analysis')
+    handleAnalyze()
+  }, [handleAnalyze])
+
+  const handleAnalyzeAgain = useCallback(() => {
+    console.log('🔄 Analyze Again clicked - starting fresh analysis')
+    // Reset states and start new analysis
+    setAnalysis(null)
+    setError(null)
+    handleAnalyze()
+  }, [handleAnalyze])
+
   if (showLoader) {
     console.log('🔄 Rendering EpicLoader - showLoader is:', showLoader)
-    return <EpicLoader onComplete={handleLoaderComplete} />
+    return (
+      <ErrorBoundary>
+        <EpicLoader onComplete={handleLoaderComplete} />
+      </ErrorBoundary>
+    )
   }
   
   console.log('🔄 Rendering main content - showLoader is:', showLoader)
 
   return (
+    <ErrorBoundary
+      onError={(error, errorInfo) => {
+        console.error('🚨 Main App Error Boundary caught error:', error)
+        console.error('🚨 Error Info:', errorInfo)
+        // Could send to error reporting service here
+      }}
+    >
     <div ref={containerRef} className={`main-app min-h-screen ${isDarkMode ? 'dark' : ''}`}>
       {/* Background Elements */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
@@ -562,30 +771,66 @@ export default function HomePage() {
             <a href="#circuit-city" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 transition-colors">Features</a>
             <a href="#editor" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 transition-colors">Analyzer</a>
             
-            {/* Connection Status */}
-            <ConnectionStatus isConnected={wsConnected} isConnecting={wsConnecting} />
-            
-            {/* WebSocket Status */}
-            {isConnected && (
-              <div className="flex items-center gap-2">
-                {wsConnected ? (
-                  <>
-                    <span className="flex h-2 w-2 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                    </span>
-                    <span className="text-xs text-green-600">Live</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="flex h-2 w-2 relative">
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-gray-400"></span>
-                    </span>
-                    <span className="text-xs text-gray-600">Standard</span>
-                  </>
-                )}
-              </div>
-            )}
+            {/* Enhanced Connection Status */}
+            <div className="flex items-center gap-2">
+              {wsConnecting ? (
+                <>
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-spin inline-flex h-full w-full rounded-full border border-blue-400 border-t-transparent"></span>
+                  </span>
+                  <span className="text-xs text-blue-600">Reconnecting...</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleReconnect}
+                    className="text-xs px-2 py-1 h-6"
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1" />
+                    Retry
+                  </Button>
+                </>
+              ) : wsConnected ? (
+                <>
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                  </span>
+                  <span className="text-xs text-green-600">Connected</span>
+                </>
+              ) : isConnected ? (
+                <>
+                  <span className="flex h-2 w-2 relative">
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500"></span>
+                  </span>
+                  <span className="text-xs text-yellow-600">API Only</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleReconnect}
+                    className="text-xs px-2 py-1 h-6"
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1" />
+                    Connect
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <span className="flex h-2 w-2 relative">
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                  </span>
+                  <span className="text-xs text-red-600">Offline</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleReconnect}
+                    className="text-xs px-2 py-1 h-6"
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1" />
+                    Reconnect
+                  </Button>
+                </>
+              )}
+            </div>
             
             <Button
               variant="ghost"
@@ -625,6 +870,24 @@ export default function HomePage() {
         onReconnect={handleReconnect}
         onRetryAnalysis={handleRetryAnalysis}
       />
+
+      {/* Persistent Analyses */}
+      {wsConnected && socket?.id && (
+        <div className="fixed top-20 right-4 z-40 w-80 max-h-96 overflow-hidden">
+          <PersistentAnalyses
+            sessionId={socket.id}
+            onAnalysisRetrieved={(analysis) => {
+              setAnalysis(analysis)
+              setCurrentAnalysisId(null)
+              setIsAnalyzing(false)
+              setError(null)
+              addToHistory(analysis)
+              toast.success('Analysis result recovered from persistence!')
+            }}
+            className="bg-white/95 backdrop-blur-sm border shadow-lg"
+          />
+        </div>
+      )}
 
       {/* Hero Section */}
       <section ref={heroRef} className="relative pt-32 pb-20 px-6 text-center overflow-hidden">
@@ -843,26 +1106,75 @@ export default function HomePage() {
               <CardContent>
                 {isAnalyzing && currentAnalysisId ? (
                   <AnalysisProgress
+                    key={currentAnalysisId} // Force re-render on new analysis
                     analysisId={currentAnalysisId}
                     language={language}
                     codeSize={code.split('\n').length}
                     onCancel={handleCancelAnalysis}
                     onComplete={() => {
+                      console.log('🔄 AnalysisProgress onComplete callback triggered')
                       // This is handled by the WebSocket event listener
                     }}
                   />
                 ) : analysis ? (
-                  useEnhancedResults ? (
-                    <EnhancedResults
-                      analysis={analysis}
-                      onExport={handleExportReport}
-                    />
-                  ) : (
-                    <AnalysisResults
-                      analysis={analysis}
-                      onExport={handleExportReport}
-                    />
-                  )
+                  <ErrorBoundary
+                    key={analysis.analysis_id} // Force re-render on new analysis
+                    fallback={
+                      <div className="text-center py-12">
+                        <div className="flex items-center justify-center mb-4">
+                          <AlertTriangle className="w-12 h-12 text-red-500" />
+                        </div>
+                        <p className="text-lg font-medium text-gray-900 mb-2">
+                          Error displaying analysis results
+                        </p>
+                        <p className="text-gray-600 mb-4">
+                          The analysis completed successfully, but there was an error rendering the results.
+                        </p>
+                        <div className="flex gap-2 justify-center">
+                          <Button 
+                            onClick={handleTryAgain}
+                            variant="outline"
+                            className="flex items-center gap-2"
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                            Try Again
+                          </Button>
+                          <Button 
+                            onClick={handleAnalyzeAgain}
+                            className="flex items-center gap-2"
+                          >
+                            <Play className="h-4 w-4" />
+                            New Analysis
+                          </Button>
+                        </div>
+                      </div>
+                    }
+                    onError={(error, errorInfo) => {
+                      console.error('🚨 Analysis Results Error Boundary caught error:', error)
+                      console.error('🚨 Analysis data that caused error:', analysis)
+                      console.error('🚨 Error Info:', errorInfo)
+                    }}
+                  >
+                    {useEnhancedResults ? (
+                      <EnhancedResults
+                        key={analysis.analysis_id} // Force re-render on new analysis
+                        analysis={analysis}
+                        onExport={handleExportReport}
+                        onTryAgain={handleTryAgain}
+                        onAnalyzeAgain={handleAnalyzeAgain}
+                        isRetrying={isAnalyzing}
+                      />
+                    ) : (
+                      <AnalysisResults
+                        key={analysis.analysis_id} // Force re-render on new analysis
+                        analysis={analysis}
+                        onExport={handleExportReport}
+                        onTryAgain={handleTryAgain}
+                        onAnalyzeAgain={handleAnalyzeAgain}
+                        isRetrying={isAnalyzing}
+                      />
+                    )}
+                  </ErrorBoundary>
                 ) : (
                   <div className="text-center py-12 text-gray-500 dark:text-gray-400">
                     <BarChart3 className="w-16 h-16 mx-auto mb-4 opacity-50" />
@@ -913,5 +1225,6 @@ export default function HomePage() {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   )
 }

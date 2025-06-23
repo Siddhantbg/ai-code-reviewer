@@ -4,46 +4,40 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 // Types for API responses
 export interface CodeIssue {
   id: string
-  type: string
+  type: string  // Maps to IssueType enum: 'bug' | 'security' | 'performance' | 'style' | 'maintainability' | 'complexity'
   severity: 'critical' | 'high' | 'medium' | 'low'
   title: string
+  description: string
   line_number?: number
   column_number?: number
-  description: string
-  suggestion?: string
-  rule_id?: string
-  category?: string
   code_snippet?: string
+  suggestion?: string
   explanation?: string
-  confidence?: number
+  confidence: number  // Required in backend with default 0.8
 }
 
 export interface CodeAnalysisResponse {
   analysis_id: string
-  timestamp: string
+  timestamp: string  // ISO datetime string from backend datetime serialization
   language: string
   filename?: string
   processing_time_ms: number
   summary: {
-    overall_score: number
     total_issues: number
     critical_issues: number
     high_issues: number
     medium_issues: number
     low_issues: number
-    lines_of_code?: number
-    complexity_score?: number
-    recommendation?: string
+    overall_score: number  // 0-10 scale
+    recommendation: string  // Required in backend
   }
   issues: CodeIssue[]
   metrics: {
     lines_of_code: number
     complexity_score: number
-    maintainability_index: number
-    test_coverage?: number | null
+    maintainability_index: number  // 0-100 scale
+    test_coverage?: number | null   // Optional in backend
     duplication_percentage: number
-    cyclomatic_complexity?: number
-    technical_debt_ratio?: number
   }
   suggestions: string[]
 }
@@ -54,6 +48,45 @@ export interface HealthResponse {
   version: string
   ai_model_loaded: boolean
   ai_model_path?: string
+  websocket?: string
+  active_analyses?: number
+}
+
+// Analysis persistence types
+export interface AnalysisInfo {
+  analysis_id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  created_at: number
+  completed_at?: number
+  has_result: boolean
+  retrieval_count: number
+}
+
+export interface PersistenceResponse {
+  success: boolean
+  session_id?: string
+  analyses?: AnalysisInfo[]
+  count?: number
+  retrieved_at: string
+}
+
+export interface AnalysisResultResponse {
+  success: boolean
+  analysis_id: string
+  result?: CodeAnalysisResponse
+  retrieved_at: string
+}
+
+export interface AnalysisStatusResponse {
+  success: boolean
+  analysis_id: string
+  available: boolean
+  status: string
+  created_at?: number
+  completed_at?: number
+  retrieval_count?: number
+  max_retrievals?: number
+  message: string
   websocket?: string
   active_analyses?: number
 }
@@ -174,6 +207,47 @@ class APIClient {
     return response.blob()
   }
 
+  // ====== ANALYSIS PERSISTENCE METHODS ======
+
+  // Get all analysis results for a client session
+  async getClientAnalyses(clientSessionId: string, limit: number = 20): Promise<PersistenceResponse> {
+    return this.request<PersistenceResponse>(`/api/v1/persistence/analyses/${clientSessionId}?limit=${limit}`)
+  }
+
+  // Get a specific analysis result
+  async getAnalysisResult(analysisId: string, clientSessionId?: string): Promise<AnalysisResultResponse> {
+    const params = clientSessionId ? `?client_session_id=${clientSessionId}` : ''
+    return this.request<AnalysisResultResponse>(`/api/v1/persistence/analysis/${analysisId}${params}`)
+  }
+
+  // Check if an analysis result is available
+  async checkAnalysisStatus(analysisId: string, clientSessionId?: string): Promise<AnalysisStatusResponse> {
+    const params = clientSessionId ? `?client_session_id=${clientSessionId}` : ''
+    return this.request<AnalysisStatusResponse>(`/api/v1/persistence/analysis/${analysisId}/check${params}`, {
+      method: 'POST'
+    })
+  }
+
+  // Delete an analysis result
+  async deleteAnalysisResult(analysisId: string, clientSessionId?: string): Promise<{success: boolean, message: string}> {
+    const params = clientSessionId ? `?client_session_id=${clientSessionId}` : ''
+    return this.request<{success: boolean, message: string}>(`/api/v1/persistence/analysis/${analysisId}${params}`, {
+      method: 'DELETE'
+    })
+  }
+
+  // Get persistence stats
+  async getPersistenceStats(): Promise<{success: boolean, stats: any}> {
+    return this.request<{success: boolean, stats: any}>('/api/v1/persistence/stats')
+  }
+
+  // Trigger cleanup of expired results
+  async triggerCleanup(): Promise<{success: boolean, message: string}> {
+    return this.request<{success: boolean, message: string}>('/api/v1/persistence/cleanup', {
+      method: 'POST'
+    })
+  }
+
   // Test connection
   async testConnection(): Promise<boolean> {
     try {
@@ -213,6 +287,7 @@ class APIClient {
 
 // Create and export the API client instance
 export const apiClient = new APIClient()
+export const api = apiClient // Export as 'api' for compatibility
 
 // Export the class for custom instances
 export default APIClient

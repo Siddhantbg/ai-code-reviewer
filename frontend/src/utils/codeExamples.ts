@@ -109,7 +109,94 @@ class UserService {
             password: userData.password
         } as User;
     }
-}`
+}`,
+
+  c: `#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int* process_numbers(int* array, int size) {
+    // Bug: potential memory leak
+    int* result = malloc(size * sizeof(int));
+    
+    for(int i = 0; i <= size; i++) { // Bug: buffer overflow
+        result[i] = array[i] * 2;
+    }
+    
+    return result; // Caller must free, not documented
+}
+
+// Security issue: buffer overflow vulnerability
+void copy_string(char* dest, char* src) {
+    strcpy(dest, src); // No bounds checking
+}`,
+
+  php: `<?php
+class UserManager {
+    private $db_connection;
+    
+    // Security issue: SQL injection vulnerability
+    public function getUser($userId) {
+        $query = "SELECT * FROM users WHERE id = " . $userId; // No sanitization
+        return mysqli_query($this->db_connection, $query);
+    }
+    
+    // Bug: password comparison using loose equality
+    public function validateLogin($username, $password) {
+        $user = $this->getUserByUsername($username);
+        if ($user['password'] == $password) { // Should use password_verify()
+            return true;
+        }
+        return false;
+    }
+    
+    // Performance issue: N+1 query problem
+    public function getUsersWithPosts() {
+        $users = $this->getAllUsers();
+        foreach($users as &$user) {
+            $user['posts'] = $this->getPostsByUserId($user['id']); // Multiple queries
+        }
+        return $users;
+    }
+}
+?>`,
+
+  ruby: `class UserService
+  def initialize
+    @users = []
+  end
+  
+  # Bug: potential division by zero
+  def calculate_average_age(users)
+    total_age = users.sum { |user| user[:age] }
+    total_age / users.length # No check for empty array
+  end
+  
+  # Security issue: mass assignment vulnerability
+  def create_user(params)
+    user = User.new(params) # No parameter filtering
+    user.save
+  end
+  
+  # Performance issue: N+1 query
+  def users_with_posts
+    User.all.map do |user|
+      {
+        user: user,
+        posts: Post.where(user_id: user.id) # Individual query for each user
+      }
+    end
+  end
+  
+  # Bug: method always returns nil
+  def find_user_by_email(email)
+    @users.each do |user|
+      if user[:email] == email
+        user # This doesn't return from the method
+      end
+    end
+  end
+end`
 };
 
 export const getLanguageDisplayName = (lang: string): string => {
@@ -118,8 +205,11 @@ export const getLanguageDisplayName = (lang: string): string => {
     javascript: 'JavaScript', 
     java: 'Java',
     cpp: 'C++',
+    c: 'C',
     go: 'Go',
     rust: 'Rust',
+    php: 'PHP',
+    ruby: 'Ruby',
     typescript: 'TypeScript'
   };
   return names[lang] || lang;
