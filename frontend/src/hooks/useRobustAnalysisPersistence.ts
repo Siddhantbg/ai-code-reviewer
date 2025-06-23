@@ -1,11 +1,14 @@
-// frontend/src/hooks/useAnalysisPersistence.ts
+// frontend/src/hooks/useRobustAnalysisPersistence.ts
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { api, AnalysisInfo, CodeAnalysisResponse } from '../lib/api'
+import { useSafePersistence } from './useSafeApi'
+import { AnalysisInfo, CodeAnalysisResponse } from '../lib/api'
 
-interface UseAnalysisPersistenceReturn {
+interface UseRobustAnalysisPersistenceReturn {
   persistedAnalyses: AnalysisInfo[]
   loading: boolean
   error: string | null
+  isAvailable: boolean
+  hasConnectivity: boolean
   refreshAnalyses: () => Promise<void>
   getAnalysisResult: (analysisId: string) => Promise<CodeAnalysisResponse | null>
   deleteAnalysis: (analysisId: string) => Promise<boolean>
@@ -13,11 +16,11 @@ interface UseAnalysisPersistenceReturn {
   stats: any
 }
 
-export function useAnalysisPersistence(
+export function useRobustAnalysisPersistence(
   sessionId?: string,
-  autoRefresh: boolean = false, // Changed default to false to prevent re-render loops
+  autoRefresh: boolean = true,
   refreshInterval: number = 30000 // 30 seconds
-): UseAnalysisPersistenceReturn {
+): UseRobustAnalysisPersistenceReturn {
   const [persistedAnalyses, setPersistedAnalyses] = useState<AnalysisInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -25,6 +28,8 @@ export function useAnalysisPersistence(
   
   const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const mountedRef = useRef(true)
+
+  const safeApi = useSafePersistence()
 
   // Cleanup on unmount
   useEffect(() => {
@@ -45,15 +50,14 @@ export function useAnalysisPersistence(
       
       console.log('🔄 Refreshing persisted analyses for session:', sessionId)
       
-      const response = await api.getClientAnalyses(sessionId, 20)
+      const response = await safeApi.getClientAnalyses(sessionId, 20)
       
       if (!mountedRef.current) return
       
-      if (response.success && response.analyses) {
+      if (response && response.analyses) {
         setPersistedAnalyses(response.analyses)
         console.log(`📋 Found ${response.analyses.length} persisted analyses`)
       } else {
-        // Handle unsuccessful response gracefully - don't treat as error
         setPersistedAnalyses([])
         console.log('📋 No persisted analyses found or endpoint unavailable')
       }
@@ -62,13 +66,10 @@ export function useAnalysisPersistence(
       if (!mountedRef.current) return
       
       const errorMessage = err instanceof Error ? err.message : 'Failed to refresh analyses'
-      console.warn('⚠️ Failed to refresh persisted analyses:', errorMessage)
+      console.warn('⚠️ Non-critical persistence error:', errorMessage)
       
-      // Don't set error for 404 or network issues - just log and continue
-      if (errorMessage.includes('404') || errorMessage.includes('Not Found') || errorMessage.includes('Network error')) {
-        console.log('📋 Persistence endpoint not available, continuing without persistence features')
-        setPersistedAnalyses([])
-      } else {
+      // Only set error for truly unexpected errors, not 404s or network issues
+      if (!errorMessage.includes('404') && !errorMessage.includes('Network error')) {
         setError(errorMessage)
       }
       
@@ -77,7 +78,7 @@ export function useAnalysisPersistence(
         setLoading(false)
       }
     }
-  }, [sessionId])
+  }, [sessionId, safeApi])
 
   const getAnalysisResult = useCallback(async (analysisId: string): Promise<CodeAnalysisResponse | null> => {
     if (!sessionId) {
@@ -88,9 +89,9 @@ export function useAnalysisPersistence(
     try {
       console.log('📤 Retrieving analysis result:', analysisId)
       
-      const response = await api.getAnalysisResult(analysisId, sessionId)
+      const response = await safeApi.getAnalysisResult(analysisId, sessionId)
       
-      if (response.success && response.result) {
+      if (response && response.success && response.result) {
         console.log('✅ Analysis result retrieved successfully')
         return response.result
       } else {
@@ -100,10 +101,10 @@ export function useAnalysisPersistence(
       
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to retrieve analysis'
-      console.error('❌ Failed to retrieve analysis result:', errorMessage)
-      throw new Error(errorMessage)
+      console.warn('⚠️ Analysis retrieval failed:', errorMessage)
+      return null
     }
-  }, [sessionId])
+  }, [sessionId, safeApi])
 
   const deleteAnalysis = useCallback(async (analysisId: string): Promise<boolean> => {
     if (!sessionId) {
@@ -114,54 +115,55 @@ export function useAnalysisPersistence(
     try {
       console.log('🗑️ Deleting analysis:', analysisId)
       
-      const response = await api.deleteAnalysisResult(analysisId, sessionId)
+      const response = await safeApi.deleteAnalysis(analysisId, sessionId)
       
-      if (response.success) {
+      if (response && response.success) {
         // Remove from local state
         setPersistedAnalyses(prev => prev.filter(analysis => analysis.analysis_id !== analysisId))
         console.log('✅ Analysis deleted successfully')
         return true
       } else {
-        console.warn('⚠️ Analysis deletion failed')
+        console.warn('⚠️ Analysis deletion failed or endpoint unavailable')
         return false
       }
       
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete analysis'
-      console.error('❌ Failed to delete analysis:', errorMessage)
-      throw new Error(errorMessage)
+      console.warn('⚠️ Analysis deletion error:', errorMessage)
+      return false
     }
-  }, [sessionId])
+  }, [sessionId, safeApi])
 
   const clearExpiredAnalyses = useCallback(async () => {
     try {
       console.log('🧹 Triggering cleanup of expired analyses')
       
-      const response = await api.triggerCleanup()
+      const response = await safeApi.triggerCleanup()
       
-      if (response.success) {
+      if (response && response.success) {
         console.log('✅ Cleanup completed')
         // Refresh analyses to reflect changes
         await refreshAnalyses()
+      } else {
+        console.warn('⚠️ Cleanup endpoint unavailable')
       }
       
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to clear expired analyses'
-      console.error('❌ Failed to clear expired analyses:', errorMessage)
-      throw new Error(errorMessage)
+      console.warn('⚠️ Cleanup failed:', errorMessage)
     }
-  }, [refreshAnalyses])
+  }, [safeApi, refreshAnalyses])
 
   const refreshStats = useCallback(async () => {
     try {
-      const response = await api.getPersistenceStats()
+      const response = await safeApi.getPersistenceStats()
       
       if (!mountedRef.current) return
       
-      if (response.success) {
+      if (response && response.stats) {
         setStats(response.stats)
       } else {
-        // Set default stats if unsuccessful
+        // Set default stats
         setStats({
           total_results: 0,
           total_sessions: 0,
@@ -171,7 +173,7 @@ export function useAnalysisPersistence(
       
     } catch (err) {
       console.warn('⚠️ Failed to refresh persistence stats:', err)
-      // Don't crash on stats failure - just set empty stats
+      // Set default stats on error
       if (mountedRef.current) {
         setStats({
           total_results: 0,
@@ -180,7 +182,7 @@ export function useAnalysisPersistence(
         })
       }
     }
-  }, [])
+  }, [safeApi])
 
   // Initial load
   useEffect(() => {
@@ -190,9 +192,9 @@ export function useAnalysisPersistence(
     }
   }, [sessionId, refreshAnalyses, refreshStats])
 
-  // Auto-refresh setup
+  // Auto-refresh setup (only if API is available)
   useEffect(() => {
-    if (!autoRefresh || !sessionId) return
+    if (!autoRefresh || !sessionId || !safeApi.isAvailable) return
 
     const scheduleRefresh = () => {
       if (refreshTimeoutRef.current) {
@@ -200,7 +202,7 @@ export function useAnalysisPersistence(
       }
       
       refreshTimeoutRef.current = setTimeout(() => {
-        if (mountedRef.current) {
+        if (mountedRef.current && safeApi.hasConnectivity) {
           refreshAnalyses().finally(() => {
             if (mountedRef.current) {
               scheduleRefresh()
@@ -218,70 +220,18 @@ export function useAnalysisPersistence(
         refreshTimeoutRef.current = null
       }
     }
-  }, [autoRefresh, sessionId, refreshInterval, refreshAnalyses])
+  }, [autoRefresh, sessionId, refreshInterval, refreshAnalyses, safeApi.isAvailable, safeApi.hasConnectivity])
 
   return {
     persistedAnalyses,
-    loading,
-    error,
+    loading: loading || safeApi.loading,
+    error: error || safeApi.error,
+    isAvailable: safeApi.isAvailable,
+    hasConnectivity: safeApi.hasConnectivity,
     refreshAnalyses,
     getAnalysisResult,
     deleteAnalysis,
     clearExpiredAnalyses,
     stats
-  }
-}
-
-// Hook for checking a specific analysis
-export function useAnalysisStatus(analysisId: string, sessionId?: string) {
-  const [status, setStatus] = useState<{
-    available: boolean
-    status: string
-    message: string
-    loading: boolean
-    error: string | null
-  }>({
-    available: false,
-    status: 'unknown',
-    message: '',
-    loading: false,
-    error: null
-  })
-
-  const checkStatus = useCallback(async () => {
-    if (!analysisId) return
-
-    setStatus(prev => ({ ...prev, loading: true, error: null }))
-
-    try {
-      const response = await api.checkAnalysisStatus(analysisId, sessionId)
-      
-      setStatus({
-        available: response.available,
-        status: response.status,
-        message: response.message,
-        loading: false,
-        error: null
-      })
-      
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to check status'
-      setStatus({
-        available: false,
-        status: 'error',
-        message: errorMessage,
-        loading: false,
-        error: errorMessage
-      })
-    }
-  }, [analysisId, sessionId])
-
-  useEffect(() => {
-    checkStatus()
-  }, [checkStatus])
-
-  return {
-    ...status,
-    refresh: checkStatus
   }
 }

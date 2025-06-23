@@ -12,7 +12,7 @@ import EpicLoader from '@/components/EpicLoader'
 import CircuitBoardCity from '@/components/CircuitBoardCity'
 import ConnectionMonitor, { ConnectionStatus } from '@/components/ConnectionMonitor'
 import ErrorBoundary from '@/components/ErrorBoundary'
-import { PersistentAnalyses } from '@/components/PersistentAnalyses'
+import { SafePersistentAnalyses } from '@/components/SafePersistentAnalyses'
 import { apiClient, CodeAnalysisResponse } from '@/lib/api'
 import { useSocket, useAnalysisSocket } from '@/lib/websocket'
 import { useToast } from '@/hooks/use-toast'
@@ -517,18 +517,19 @@ export default function HomePage() {
           
           if (!success) {
             console.warn('⚠️ Failed to start WebSocket analysis - falling back to REST API')
-            throw new Error('WebSocket analysis start failed')
+            // Fall through to REST API
+          } else {
+            // WebSocket analysis started successfully, return early
+            return
           }
-          
-          // WebSocket analysis started successfully, return early
-          return
         } else {
           console.log('🔄 WebSocket not available, using REST API')
-          throw new Error('WebSocket not connected')
+          // Fall through to REST API
         }
       } catch (wsError) {
         console.warn('⚠️ WebSocket analysis failed, falling back to REST API:', wsError)
         toast.error('WebSocket analysis failed - switching to REST API')
+        // Fall through to REST API
       }
       
       // REST API fallback
@@ -874,7 +875,7 @@ export default function HomePage() {
       {/* Persistent Analyses */}
       {wsConnected && socket?.id && (
         <div className="fixed top-20 right-4 z-40 w-80 max-h-96 overflow-hidden">
-          <PersistentAnalyses
+          <SafePersistentAnalyses
             sessionId={socket.id}
             onAnalysisRetrieved={(analysis) => {
               setAnalysis(analysis)

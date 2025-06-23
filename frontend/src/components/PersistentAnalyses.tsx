@@ -30,7 +30,7 @@ export function PersistentAnalyses({
     deleteAnalysis,
     clearExpiredAnalyses,
     stats
-  } = useAnalysisPersistence(sessionId, true, 30000)
+  } = useAnalysisPersistence(sessionId, false, 30000) // Changed autoRefresh to false to prevent infinite re-render loops
 
   const [retrievingId, setRetrievingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -176,9 +176,19 @@ export function PersistentAnalyses({
       </CardHeader>
       
       <CardContent>
-        {error && (
+        {error && !error.includes('404') && !error.includes('Network error') && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
             <p className="text-sm">{error}</p>
+          </div>
+        )}
+
+        {/* Show info message when persistence is not available */}
+        {error && (error.includes('404') || error.includes('Network error')) && (
+          <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded mb-4">
+            <p className="text-sm">
+              <span className="font-medium">Persistence service unavailable:</span> 
+              {" "}Analysis history will be available when the backend persistence endpoints are active.
+            </p>
           </div>
         )}
 

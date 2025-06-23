@@ -12,78 +12,36 @@ from app.models.responses import CodeAnalysisResponse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/persistence", tags=["persistence"])
+router = APIRouter(tags=["persistence"])
 
 
-@router.get("/analyses/{client_session_id}")
-async def get_client_analyses(
-    client_session_id: str,
-    request: Request,
-    limit: int = Query(20, ge=1, le=100, description="Maximum number of results to return")
-) -> Dict[str, Any]:
-    """Get all available analysis results for a client session."""
+@router.get("/health")
+async def persistence_health_check() -> Dict[str, Any]:
+    """Health check endpoint for persistence service."""
     try:
-        client_ip = request.client.host if request.client else None
+        # Test basic functionality
+        stats = analysis_persistence.get_storage_stats()
+        service_available = True
+        message = "Persistence service is operational"
         
-        analyses = await analysis_persistence.get_client_analyses(
-            client_session_id=client_session_id,
-            client_ip=client_ip,
-            limit=limit
-        )
-        
-        return {
-            "success": True,
-            "session_id": client_session_id,
-            "analyses": analyses,
-            "count": len(analyses),
-            "retrieved_at": datetime.utcnow().isoformat()
-        }
-        
+        if not stats:
+            service_available = False
+            message = "Persistence service is degraded but operational"
+            
     except Exception as e:
-        logger.error(f"❌ Failed to get client analyses for {client_session_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve analyses: {str(e)}"
-        )
+        logger.warning(f"⚠️ Persistence health check failed: {e}")
+        service_available = False
+        message = f"Persistence service is degraded: {str(e)}"
+    
+    return {
+        "success": True,
+        "service": "persistence",
+        "status": "healthy" if service_available else "degraded", 
+        "available": service_available,
+        "message": message,
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
-
-@router.get("/analysis/{analysis_id}")
-async def get_analysis_result(
-    analysis_id: str,
-    request: Request,
-    client_session_id: Optional[str] = Query(None, description="Client session ID for authorization")
-) -> Dict[str, Any]:
-    """Retrieve a specific analysis result."""
-    try:
-        client_ip = request.client.host if request.client else None
-        
-        result_data = await analysis_persistence.retrieve_analysis_result(
-            analysis_id=analysis_id,
-            client_session_id=client_session_id,
-            client_ip=client_ip
-        )
-        
-        if not result_data:
-            raise HTTPException(
-                status_code=404,
-                detail="Analysis result not found, expired, or access denied"
-            )
-        
-        return {
-            "success": True,
-            "analysis_id": analysis_id,
-            "result": result_data,
-            "retrieved_at": datetime.utcnow().isoformat()
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Failed to get analysis result {analysis_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve analysis result: {str(e)}"
-        )
 
 
 @router.post("/analysis/{analysis_id}/check")
@@ -143,10 +101,125 @@ async def check_analysis_status(
         
     except Exception as e:
         logger.error(f"❌ Failed to check analysis status {analysis_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to check analysis status: {str(e)}"
+        # Return safe response instead of 500 error to prevent frontend crashes
+        return {
+            "success": False,
+            "analysis_id": analysis_id,
+            "available": False,
+            "status": "error",
+            "message": f"Failed to check analysis status: {str(e)}",
+            "error": str(e)
+        }
+
+
+@router.get("/client/{client_id}/analyses")
+async def get_client_analyses(
+    client_id: str,
+    request: Request,
+    limit: Optional[int] = Query(10, ge=1, le=100, description="Maximum number of analyses to return"),
+    offset: Optional[int] = Query(0, ge=0, description="Number of analyses to skip")
+) -> Dict[str, Any]:
+    """Retrieve analysis history for a specific client."""
+    try:
+        client_ip = request.client.host if request.client else None
+        
+        # Get all analyses for this client
+        analyses = await analysis_persistence.get_client_analyses(
+            client_session_id=client_id,
+            client_ip=client_ip,
+            limit=limit,
+            offset=offset
         )
+        
+        return {
+            "success": True,
+            "client_id": client_id,
+            "analyses": analyses,
+            "count": len(analyses),
+            "limit": limit,
+            "offset": offset,
+            "retrieved_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to get client analyses for {client_id}: {e}")
+        # Return empty analyses instead of 500 error to prevent frontend crashes
+        return {
+            "success": False,
+            "error": "Failed to retrieve client analyses",
+            "client_id": client_id,
+            "analyses": [],
+            "count": 0,
+            "limit": limit,
+            "offset": offset,
+            "retrieved_at": datetime.utcnow().isoformat()
+        }
+
+
+@router.get("/analyses/{client_id}")
+async def get_analyses_by_id(
+    client_id: str,
+    request: Request,
+    limit: Optional[int] = Query(10, ge=1, le=100, description="Maximum number of analyses to return"),
+    offset: Optional[int] = Query(0, ge=0, description="Number of analyses to skip"),
+    client_session_id: Optional[str] = Query(None, description="Client session ID for authorization")
+) -> Dict[str, Any]:
+    """
+    Retrieve analyses by ID - handles both client_id and analysis_id for backward compatibility.
+    If it looks like an analysis_id (contains dashes), try to get specific analysis.
+    Otherwise, treat as client_id and get client analysis history.
+    """
+    try:
+        client_ip = request.client.host if request.client else None
+        
+        # If the ID looks like an analysis ID (contains timestamp and dashes), try specific analysis first
+        if "-" in client_id and len(client_id) > 20:
+            # Try to get specific analysis result
+            result_data = await analysis_persistence.retrieve_analysis_result(
+                analysis_id=client_id,
+                client_session_id=client_session_id,
+                client_ip=client_ip
+            )
+            
+            if result_data:
+                return {
+                    "success": True,
+                    "analysis_id": client_id,
+                    "result": result_data,
+                    "retrieved_at": datetime.utcnow().isoformat()
+                }
+        
+        # Treat as client_id and get client analysis history
+        analyses = await analysis_persistence.get_client_analyses(
+            client_session_id=client_id,
+            client_ip=client_ip,
+            limit=limit,
+            offset=offset
+        )
+        
+        return {
+            "success": True,
+            "client_id": client_id,
+            "analyses": analyses,
+            "count": len(analyses),
+            "limit": limit,
+            "offset": offset,
+            "retrieved_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to get analyses for ID {client_id}: {e}")
+        # Return safe response to prevent frontend crashes
+        return {
+            "success": False,
+            "error": "Failed to retrieve analyses",
+            "client_id": client_id,
+            "analyses": [],
+            "count": 0,
+            "limit": limit,
+            "offset": offset,
+            "retrieved_at": datetime.utcnow().isoformat()
+        }
 
 
 @router.get("/stats")
@@ -154,6 +227,18 @@ async def get_persistence_stats() -> Dict[str, Any]:
     """Get storage and persistence statistics."""
     try:
         stats = analysis_persistence.get_storage_stats()
+        
+        # Ensure we always return a valid stats object, even if empty
+        if not stats:
+            stats = {
+                "total_results": 0,
+                "total_sessions": 0,
+                "storage_size_bytes": 0,
+                "storage_size_mb": 0.0,
+                "storage_limit_mb": 500,
+                "status_counts": {},
+                "last_cleanup": 0
+            }
         
         return {
             "success": True,
@@ -163,10 +248,21 @@ async def get_persistence_stats() -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"❌ Failed to get persistence stats: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve stats: {str(e)}"
-        )
+        # Return safe default stats instead of 500 error to prevent frontend crashes
+        return {
+            "success": False,
+            "error": "Failed to retrieve stats",
+            "stats": {
+                "total_results": 0,
+                "total_sessions": 0,
+                "storage_size_bytes": 0,
+                "storage_size_mb": 0.0,
+                "storage_limit_mb": 500,
+                "status_counts": {},
+                "last_cleanup": 0
+            },
+            "retrieved_at": datetime.utcnow().isoformat()
+        }
 
 
 @router.delete("/analysis/{analysis_id}")
@@ -183,18 +279,26 @@ async def delete_analysis_result(
         result = analysis_persistence.results_cache.get(analysis_id)
         
         if not result:
-            raise HTTPException(
-                status_code=404,
-                detail="Analysis result not found"
-            )
+            # Return success even if not found to prevent 404 errors
+            return {
+                "success": True,
+                "analysis_id": analysis_id,
+                "message": "Analysis result not found or already deleted",
+                "deleted_at": datetime.utcnow().isoformat(),
+                "status": "not_found"
+            }
         
         # Check authorization
         if client_session_id and result.client_session_id != client_session_id:
             if client_ip and result.client_ip != client_ip:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Access denied"
-                )
+                # Return success but indicate unauthorized instead of 403 error
+                return {
+                    "success": False,
+                    "analysis_id": analysis_id,
+                    "message": "Access denied - insufficient permissions to delete this analysis",
+                    "deleted_at": datetime.utcnow().isoformat(),
+                    "status": "unauthorized"
+                }
         
         # Remove the result
         await analysis_persistence._remove_result(analysis_id)
@@ -203,17 +307,21 @@ async def delete_analysis_result(
             "success": True,
             "analysis_id": analysis_id,
             "message": "Analysis result deleted successfully",
-            "deleted_at": datetime.utcnow().isoformat()
+            "deleted_at": datetime.utcnow().isoformat(),
+            "status": "deleted"
         }
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"❌ Failed to delete analysis result {analysis_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete analysis result: {str(e)}"
-        )
+        # Return safe response instead of 500 error to prevent frontend crashes
+        return {
+            "success": False,
+            "analysis_id": analysis_id,
+            "message": f"Failed to delete analysis result: {str(e)}",
+            "deleted_at": datetime.utcnow().isoformat(),
+            "status": "error",
+            "error": str(e)
+        }
 
 
 @router.post("/cleanup")
@@ -225,12 +333,17 @@ async def trigger_cleanup() -> Dict[str, Any]:
         return {
             "success": True,
             "message": "Cleanup completed",
-            "cleaned_at": datetime.utcnow().isoformat()
+            "cleaned_at": datetime.utcnow().isoformat(),
+            "status": "completed"
         }
         
     except Exception as e:
         logger.error(f"❌ Failed to trigger cleanup: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Cleanup failed: {str(e)}"
-        )
+        # Return safe response instead of 500 error to prevent frontend crashes
+        return {
+            "success": False,
+            "message": f"Cleanup failed: {str(e)}",
+            "cleaned_at": datetime.utcnow().isoformat(),
+            "status": "error",
+            "error": str(e)
+        }

@@ -121,6 +121,8 @@ class APIClient {
         'Content-Type': 'application/json',
         ...options.headers,
       },
+      // Add timeout to prevent hanging requests
+      signal: AbortSignal.timeout(10000), // 10 second timeout
       ...options,
     }
 
@@ -128,6 +130,17 @@ class APIClient {
       const response = await fetch(url, config)
       
       if (!response.ok) {
+        // Handle specific HTTP status codes
+        if (response.status === 404) {
+          throw new Error(`Endpoint not found: ${endpoint}`)
+        }
+        if (response.status === 500) {
+          throw new Error(`Server error: Internal server error`)
+        }
+        if (response.status === 503) {
+          throw new Error(`Server unavailable: Service temporarily unavailable`)
+        }
+        
         const errorData = await response.json().catch(() => ({}))
         throw new Error(
           errorData.detail || 
@@ -141,6 +154,9 @@ class APIClient {
     } catch (error) {
       if (error instanceof TypeError && error.message.includes('fetch')) {
         throw new Error('Network error: Unable to connect to the server. Please check if the backend is running.')
+      }
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Request timeout: The server took too long to respond.')
       }
       throw error
     }
@@ -211,41 +227,127 @@ class APIClient {
 
   // Get all analysis results for a client session
   async getClientAnalyses(clientSessionId: string, limit: number = 20): Promise<PersistenceResponse> {
-    return this.request<PersistenceResponse>(`/api/v1/persistence/analyses/${clientSessionId}?limit=${limit}`)
+    try {
+      return await this.request<PersistenceResponse>(`/api/v1/persistence/analyses/${clientSessionId}?limit=${limit}`)
+    } catch (error) {
+      // Fallback for 404 errors - return empty response to prevent crashes
+      if (error instanceof Error && (error.message.includes('404') || error.message.includes('Not Found'))) {
+        console.warn('⚠️ Client analyses endpoint not found, returning empty result')
+        return {
+          success: false,
+          analyses: [],
+          count: 0,
+          retrieved_at: new Date().toISOString()
+        }
+      }
+      throw error
+    }
   }
 
   // Get a specific analysis result
   async getAnalysisResult(analysisId: string, clientSessionId?: string): Promise<AnalysisResultResponse> {
     const params = clientSessionId ? `?client_session_id=${clientSessionId}` : ''
-    return this.request<AnalysisResultResponse>(`/api/v1/persistence/analysis/${analysisId}${params}`)
+    try {
+      return await this.request<AnalysisResultResponse>(`/api/v1/persistence/analyses/${analysisId}${params}`)
+    } catch (error) {
+      // Fallback for 404 errors - return unsuccessful response instead of throwing
+      if (error instanceof Error && (error.message.includes('404') || error.message.includes('Not Found'))) {
+        console.warn(`⚠️ Analysis result not found: ${analysisId}`)
+        return {
+          success: false,
+          analysis_id: analysisId,
+          retrieved_at: new Date().toISOString()
+        }
+      }
+      throw error
+    }
   }
 
   // Check if an analysis result is available
   async checkAnalysisStatus(analysisId: string, clientSessionId?: string): Promise<AnalysisStatusResponse> {
     const params = clientSessionId ? `?client_session_id=${clientSessionId}` : ''
-    return this.request<AnalysisStatusResponse>(`/api/v1/persistence/analysis/${analysisId}/check${params}`, {
-      method: 'POST'
-    })
+    try {
+      return await this.request<AnalysisStatusResponse>(`/api/v1/persistence/analysis/${analysisId}/check${params}`, {
+        method: 'POST'
+      })
+    } catch (error) {
+      // Fallback for 404 errors
+      if (error instanceof Error && (error.message.includes('404') || error.message.includes('Not Found'))) {
+        console.warn(`⚠️ Analysis status check endpoint not found: ${analysisId}`)
+        return {
+          success: false,
+          analysis_id: analysisId,
+          available: false,
+          status: 'not_found',
+          message: 'Analysis status endpoint not available'
+        }
+      }
+      throw error
+    }
   }
 
   // Delete an analysis result
   async deleteAnalysisResult(analysisId: string, clientSessionId?: string): Promise<{success: boolean, message: string}> {
     const params = clientSessionId ? `?client_session_id=${clientSessionId}` : ''
-    return this.request<{success: boolean, message: string}>(`/api/v1/persistence/analysis/${analysisId}${params}`, {
-      method: 'DELETE'
-    })
+    try {
+      return await this.request<{success: boolean, message: string}>(`/api/v1/persistence/analysis/${analysisId}${params}`, {
+        method: 'DELETE'
+      })
+    } catch (error) {
+      // Fallback for 404 errors
+      if (error instanceof Error && (error.message.includes('404') || error.message.includes('Not Found'))) {
+        console.warn(`⚠️ Analysis deletion endpoint not found: ${analysisId}`)
+        return {
+          success: false,
+          message: 'Analysis deletion endpoint not available'
+        }
+      }
+      throw error
+    }
   }
 
   // Get persistence stats
   async getPersistenceStats(): Promise<{success: boolean, stats: any}> {
-    return this.request<{success: boolean, stats: any}>('/api/v1/persistence/stats')
+    try {
+      return await this.request<{success: boolean, stats: any}>('/api/v1/persistence/stats')
+    } catch (error) {
+      // Fallback for 404 errors - return empty stats to prevent crashes
+      if (error instanceof Error && (error.message.includes('404') || error.message.includes('Not Found'))) {
+        console.warn('⚠️ Persistence stats endpoint not found, returning empty stats')
+        return {
+          success: false,
+          stats: {
+            total_results: 0,
+            total_sessions: 0,
+            storage_size_bytes: 0,
+            storage_size_mb: 0.0,
+            storage_limit_mb: 500,
+            status_counts: {},
+            last_cleanup: 0
+          }
+        }
+      }
+      throw error
+    }
   }
 
   // Trigger cleanup of expired results
   async triggerCleanup(): Promise<{success: boolean, message: string}> {
-    return this.request<{success: boolean, message: string}>('/api/v1/persistence/cleanup', {
-      method: 'POST'
-    })
+    try {
+      return await this.request<{success: boolean, message: string}>('/api/v1/persistence/cleanup', {
+        method: 'POST'
+      })
+    } catch (error) {
+      // Fallback for 404 errors
+      if (error instanceof Error && (error.message.includes('404') || error.message.includes('Not Found'))) {
+        console.warn('⚠️ Cleanup endpoint not found')
+        return {
+          success: false,
+          message: 'Cleanup endpoint not available'
+        }
+      }
+      throw error
+    }
   }
 
   // Test connection

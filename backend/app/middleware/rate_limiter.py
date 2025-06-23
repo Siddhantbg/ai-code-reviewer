@@ -18,6 +18,7 @@ class RateLimiter:
             'default': {'requests': 60, 'window': 60},  # 60 requests per minute
             'analysis': {'requests': 10, 'window': 60},  # 10 analyses per minute
             'health': {'requests': 120, 'window': 60},   # Health checks more permissive
+            'persistence': {'requests': 30, 'window': 60},  # 30 persistence requests per minute
         }
         
         self.websocket_limits = {
@@ -75,10 +76,9 @@ class RateLimiter:
         
         # Check if IP is blocked
         if self.is_ip_blocked(client_id):
-            raise HTTPException(
-                status_code=429,
-                detail="IP temporarily blocked due to rate limit violations"
-            )
+            # For persistence endpoints, return False instead of raising exception
+            # This allows the middleware to handle it gracefully
+            return False
         
         current_time = time.time()
         limits = self.api_limits.get(endpoint_type, self.api_limits['default'])
@@ -242,24 +242,52 @@ async def rate_limit_middleware(request: Request, call_next):
         await rate_limiter.cleanup_old_data()
         
         # Determine endpoint type for rate limiting
+        # Bypass rate limiting for OPTIONS requests
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         path = request.url.path
         if '/api/v1/analysis' in path:
             endpoint_type = 'analysis'
         elif '/health' in path or '/api/health' in path:
             endpoint_type = 'health'
+        elif '/api/v1/persistence' in path:
+            endpoint_type = 'persistence'
         else:
             endpoint_type = 'default'
             
         # Check rate limits
         if not rate_limiter.check_api_rate_limit(request, endpoint_type):
-            return JSONResponse(
-                status_code=429,
-                content={
-                    "detail": "Rate limit exceeded. Please try again later.",
-                    "retry_after": 60
-                },
-                headers={"Retry-After": "60"}
-            )
+            # For persistence endpoints, return a 200 with rate limit info instead of 429
+            if endpoint_type == 'persistence':
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "success": False,
+                        "message": "Rate limit exceeded for persistence service",
+                        "status": "rate_limited",
+                        "retry_after": 60,
+                        "analyses": [],
+                        "stats": {
+                            "total_results": 0,
+                            "total_sessions": 0,
+                            "storage_size_bytes": 0,
+                            "storage_size_mb": 0.0,
+                            "storage_limit_mb": 500,
+                            "status_counts": {},
+                            "last_cleanup": 0
+                        }
+                    }
+                )
+            else:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "detail": "Rate limit exceeded. Please try again later.",
+                        "retry_after": 60
+                    },
+                    headers={"Retry-After": "60"}
+                )
             
         # Process request
         response = await call_next(request)

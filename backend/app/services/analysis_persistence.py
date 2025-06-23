@@ -227,7 +227,8 @@ class AnalysisPersistenceService:
         self, 
         client_session_id: str, 
         client_ip: Optional[str] = None,
-        limit: int = 20
+        limit: int = 20,
+        offset: int = 0
     ) -> List[Dict[str, Any]]:
         """Get all available analysis results for a client session."""
         try:
@@ -239,8 +240,9 @@ class AnalysisPersistenceService:
                     if ip == client_ip and session_id != client_session_id:
                         analysis_ids.extend(self.client_sessions.get(session_id, []))
             
-            # Remove duplicates and limit results
-            analysis_ids = list(set(analysis_ids))[-limit:]
+            # Remove duplicates and apply offset/limit
+            analysis_ids = list(set(analysis_ids))
+            analysis_ids = analysis_ids[offset:offset + limit] if offset < len(analysis_ids) else []
             
             results = []
             for analysis_id in analysis_ids:
@@ -395,32 +397,59 @@ class AnalysisPersistenceService:
             logger.error(f"❌ Storage limit cleanup failed: {e}")
     
     def get_storage_stats(self) -> Dict[str, Any]:
-        """Get storage statistics."""
+        """Get storage statistics with resilient fallbacks."""
         try:
-            total_results = len(self.results_cache)
-            total_sessions = len(self.client_sessions)
+            total_results = len(self.results_cache) if hasattr(self, 'results_cache') else 0
+            total_sessions = len(self.client_sessions) if hasattr(self, 'client_sessions') else 0
             
-            # Calculate storage size
-            total_size = sum(f.stat().st_size for f in self.storage_dir.glob("*.json"))
+            # Calculate storage size with fallback
+            total_size = 0
+            try:
+                if hasattr(self, 'storage_dir') and self.storage_dir.exists():
+                    total_size = sum(f.stat().st_size for f in self.storage_dir.glob("*.json"))
+            except Exception as storage_error:
+                logger.warning(f"⚠️ Failed to calculate storage size: {storage_error}")
+                total_size = 0
             
-            # Status breakdown
+            # Status breakdown with error handling
             status_counts = {}
-            for result in self.results_cache.values():
-                status_counts[result.status] = status_counts.get(result.status, 0) + 1
+            try:
+                if hasattr(self, 'results_cache'):
+                    for result in self.results_cache.values():
+                        status = getattr(result, 'status', 'unknown')
+                        status_counts[status] = status_counts.get(status, 0) + 1
+            except Exception as status_error:
+                logger.warning(f"⚠️ Failed to calculate status counts: {status_error}")
+                status_counts = {}
+            
+            max_storage_mb = getattr(self, 'max_storage_size_bytes', 500 * 1024 * 1024) / 1024 / 1024
+            last_cleanup = getattr(self, 'last_cleanup', 0)
             
             return {
                 'total_results': total_results,
                 'total_sessions': total_sessions,
                 'storage_size_bytes': total_size,
                 'storage_size_mb': round(total_size / 1024 / 1024, 2),
-                'storage_limit_mb': self.max_storage_size_bytes / 1024 / 1024,
+                'storage_limit_mb': max_storage_mb,
                 'status_counts': status_counts,
-                'last_cleanup': self.last_cleanup
+                'last_cleanup': last_cleanup,
+                'service_available': True
             }
         
         except Exception as e:
             logger.error(f"❌ Failed to get storage stats: {e}")
-            return {}
+            # Return safe defaults to prevent frontend crashes
+            return {
+                'total_results': 0,
+                'total_sessions': 0,
+                'storage_size_bytes': 0,
+                'storage_size_mb': 0.0,
+                'storage_limit_mb': 500,
+                'status_counts': {},
+                'last_cleanup': 0,
+                'service_available': False,
+                'error': str(e)
+            }
 
 
 # Global instance
