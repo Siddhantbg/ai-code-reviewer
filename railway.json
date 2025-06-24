@@ -1,0 +1,14 @@
+{
+  "deploy": {
+    "dockerImage": "siddhant004/ai-code-reviewer:latest"
+  },
+  "environments": {
+    "production": {
+      "variables": {
+        "PORT": "8000",
+        "PYTHONUNBUFFERED": "1",
+        "MODEL_PATH": "/app/models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+      }
+    }
+  }
+}
