@@ -12,9 +12,8 @@ from collections import defaultdict
 
 from app.routers import analysis
 from app.routers.persistence import router as persistence_router
-from app.models.requests import CodeAnalysisRequest
-from app.models.responses import HealthResponse, CodeAnalysisResponse
-from app.services.ai_service import ai_analyzer
+from app.models.responses import HealthResponse
+from app.services.gguf_service import gguf_analyzer
 from app.services.analysis_persistence import analysis_persistence
 from app.monitoring.resource_monitor import resource_monitor
 from app.utils.performance_optimizer import performance_optimizer
@@ -461,9 +460,9 @@ async def run_analysis_with_progress(
             # Remove artificial delays for better performance
             # Processing time should be based on actual work, not artificial delays
             
-            # Special handling for AI model loading with circuit breaker
+            # Special handling for GGUF model loading with circuit breaker
             if stage_key == "model_loading":
-                if not ai_analyzer.model_loaded:
+                if not gguf_analyzer.model:
                     await sio.emit('analysis_progress', {
                         'analysisId': analysis_id,
                         'progress': 12,
@@ -471,9 +470,9 @@ async def run_analysis_with_progress(
                         'stage': stage_key
                     }, room=sid)
                     
-                    # Load model with circuit breaker protection
+                    # Initialize GGUF model with circuit breaker protection
                     circuit_breaker = performance_optimizer.get_circuit_breaker(
-                        'ai_model_loading', failure_threshold=3, recovery_timeout=300
+                        'gguf_model_loading', failure_threshold=3, recovery_timeout=300
                     )
                     
                     try:
@@ -481,49 +480,40 @@ async def run_analysis_with_progress(
                         async with performance_optimizer.ai_semaphore:
                             await circuit_breaker.call(
                                 lambda: asyncio.wait_for(
-                                    ai_analyzer.load_model(),
-                                    timeout=60.0
+                                    gguf_analyzer.initialize(),
+                                    timeout=120.0
                                 )
                             )
                     except asyncio.TimeoutError:
-                        logger.error("❌ Model loading timed out after 1 minute")
+                        logger.error("❌ GGUF model initialization timed out after 2 minutes")
                         await sio.emit('analysis_error', {
                             'analysisId': analysis_id,
-                            'error': 'Model loading timed out. Please try again.'
+                            'error': 'GGUF model initialization timed out. Please try again.'
                         }, room=sid)
                         return
                     except Exception as e:
-                        logger.error(f"❌ Model loading failed: {e}")
+                        logger.error(f"❌ GGUF model initialization failed: {e}")
                         await sio.emit('analysis_error', {
                             'analysisId': analysis_id,
-                            'error': 'Failed to load AI model. Please try again later.'
+                            'error': 'Failed to initialize GGUF model. Please try again later.'
                         }, room=sid)
                         return
                     
-                    if ai_analyzer.model_loaded:
+                    if gguf_analyzer.model:
                         await sio.emit('analysis_progress', {
                             'analysisId': analysis_id,
                             'progress': 15,
-                            'message': 'AI model loaded successfully',
+                            'message': 'GGUF model initialized successfully',
                             'stage': stage_key
                         }, room=sid)
                     else:
                         await sio.emit('analysis_error', {
                             'analysisId': analysis_id,
-                            'error': 'Failed to load AI model'
+                            'error': 'Failed to initialize GGUF model'
                         }, room=sid)
                         return
         
-        # Create analysis request
-        request = CodeAnalysisRequest(
-            code=code,
-            language=language,
-            filename=filename,
-            analysis_type=analysis_type,
-            include_suggestions=include_suggestions,
-            include_explanations=include_explanations,
-            severity_threshold=severity_threshold
-        )
+        # Parameters are now passed directly to GGUF analyzer
         
         # Perform the actual analysis with caching, circuit breaker, and timeout protection
         await sio.emit('analysis_progress', {
@@ -541,18 +531,18 @@ async def run_analysis_with_progress(
             logger.info(f"📊 Using cached result for analysis {analysis_id}")
             result = cached_result
         else:
-            # Get circuit breaker for AI analysis
-            ai_circuit_breaker = performance_optimizer.get_circuit_breaker(
-                'ai_analysis', failure_threshold=5, recovery_timeout=180
+            # Get circuit breaker for GGUF analysis
+            gguf_circuit_breaker = performance_optimizer.get_circuit_breaker(
+                'gguf_analysis', failure_threshold=5, recovery_timeout=180
             )
             
             try:
                 # Perform analysis with circuit breaker and semaphore protection
                 async with performance_optimizer.ai_semaphore:
-                    result = await ai_circuit_breaker.call(
+                    result = await gguf_circuit_breaker.call(
                         lambda: asyncio.wait_for(
-                            ai_analyzer.analyze_code(request),
-                            timeout=300.0  # INCREASED from 2 minutes to 5 minutes for AI analysis
+                            gguf_analyzer.analyze_code(code, language, analysis_type),
+                            timeout=300.0  # 5 minutes for GGUF analysis
                         )
                     )
                 
@@ -569,16 +559,16 @@ async def run_analysis_with_progress(
                 return
             except Exception as e:
                 if "Circuit breaker is open" in str(e):
-                    logger.error(f"❌ AI analysis circuit breaker open for {analysis_id}")
+                    logger.error(f"❌ GGUF analysis circuit breaker open for {analysis_id}")
                     await sio.emit('analysis_error', {
                         'analysisId': analysis_id,
-                        'error': 'AI analysis service is temporarily unavailable. Please try again later.'
+                        'error': 'GGUF analysis service is temporarily unavailable. Please try again later.'
                     }, room=sid)
                 else:
-                    logger.error(f"❌ AI analysis failed for {analysis_id}: {e}")
+                    logger.error(f"❌ GGUF analysis failed for {analysis_id}: {e}")
                     await sio.emit('analysis_error', {
                         'analysisId': analysis_id,
-                        'error': 'Analysis failed due to an internal error.'
+                        'error': 'GGUF analysis failed due to an internal error.'
                     }, room=sid)
                 return
         
@@ -594,6 +584,7 @@ async def run_analysis_with_progress(
         processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
         
         # Build complete response with metadata (similar to REST API)
+        # Handle both GGUF result structure and ensure backward compatibility
         complete_result = {
             'analysis_id': analysis_id,
             'timestamp': datetime.utcnow().isoformat() + 'Z',
@@ -601,9 +592,10 @@ async def run_analysis_with_progress(
             'filename': filename,
             'processing_time_ms': processing_time,
             'issues': result.get('issues', []),
-            'metrics': result.get('metrics', {}),
+            'metrics': result.get('metrics', result.get('metadata', {})),  # GGUF uses 'metadata'
             'summary': result.get('summary', {}),
-            'suggestions': result.get('suggestions', [])
+            'suggestions': result.get('suggestions', []),
+            'metadata': result.get('metadata', {})  # Include GGUF metadata
         }
         
         # Store analysis result for persistence
@@ -896,38 +888,48 @@ async def startup_event():
     asyncio.create_task(periodic_performance_cleanup())
     logger.info("🧹 Started periodic performance cleanup")
     
-    # Ensure AI model is loaded at startup to prevent blocking during requests
-    if not ai_analyzer.model_loaded:
-        logger.info("🤖 Loading AI model on startup...")
-        try:
-            start_time = time.time()
-            await ai_analyzer.load_model()
-            load_time = time.time() - start_time
-            if ai_analyzer.model_loaded:
-                logger.info(f"✅ AI model loaded successfully in {load_time:.2f}s")
-            else:
-                logger.warning("⚠️ Failed to load AI model on startup")
-        except Exception as e:
-            logger.error(f"❌ Error loading AI model: {e}")
+    # Ensure GGUF model is initialized at startup to prevent blocking during requests
+    if not gguf_analyzer.model:
+        logger.info("🤖 Initializing GGUF model on startup...")
+        
+        # Check if model file exists before attempting to load
+        if not os.path.exists(gguf_analyzer.model_path):
+            logger.error(f"❌ GGUF model file not found: {gguf_analyzer.model_path}")
+            logger.error("📝 Please ensure the model file is downloaded and placed correctly")
+            logger.error("🔧 Server will start but model functionality will be unavailable")
+        else:
+            try:
+                start_time = time.time()
+                await gguf_analyzer.initialize()
+                load_time = time.time() - start_time
+                if gguf_analyzer.model:
+                    logger.info(f"✅ GGUF model initialized successfully in {load_time:.2f}s")
+                else:
+                    logger.warning("⚠️ Failed to initialize GGUF model on startup")
+            except Exception as e:
+                logger.error(f"❌ Error initializing GGUF model: {e}")
+                logger.error("🔧 Server will continue without model - use /model/initialize endpoint to retry")
     
     logger.info("🔌 Socket.IO server initialized and ready for connections")
     logger.info(f"📡 WebSocket endpoint: ws://localhost:8000/socket.io/")
     logger.info(f"📖 API documentation: http://localhost:8000/docs")
     logger.info(f"📊 Connection statistics: http://localhost:8000/api/socket-stats")
     logger.info(f"📊 Resource monitoring: http://localhost:8000/api/resource-stats")
+    logger.info(f"🤖 Model status: http://localhost:8000/model/status")
+    logger.info(f"🚀 Model initialization: POST http://localhost:8000/model/initialize")
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Health check endpoint to verify the API is running."""
-    # Include AI model status in health check
-    ai_status = "loaded" if ai_analyzer.model_loaded else "not loaded"
+    # Include GGUF model status in health check
+    gguf_status = "initialized" if gguf_analyzer.model else "not initialized"
     
     return HealthResponse(
         status="healthy",
-        message=f"AI Code Review Assistant is running with WebSocket support",
+        message=f"AI Code Review Assistant is running with GGUF model support",
         version="1.0.0",
-        ai_model_loaded=ai_analyzer.model_loaded,
-        ai_model_path="./models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+        ai_model_loaded=bool(gguf_analyzer.model),
+        ai_model_path=gguf_analyzer.model_path
     )
 
 @app.get("/api/health")
@@ -936,10 +938,90 @@ async def api_health_check():
     return {
         "status": "healthy", 
         "websocket": "enabled",
-        "ai_model_loaded": ai_analyzer.model_loaded,
+        "gguf_model_initialized": bool(gguf_analyzer.model),
         "active_analyses": len(active_analyses),
         "active_connections": connection_stats['active_connections']
     }
+
+@app.get("/model/status")
+async def get_model_status():
+    """Get GGUF model status and information."""
+    try:
+        model_initialized = bool(gguf_analyzer.model)
+        
+        status_info = {
+            "model_initialized": model_initialized,
+            "model_path": gguf_analyzer.model_path,
+            "model_exists": os.path.exists(gguf_analyzer.model_path),
+            "model_type": "GGUF (llama-cpp-python)",
+            "model_name": "deepseek-coder-1.3b-instruct",
+            "quantization": "Q4_K_M",
+            "status": "ready" if model_initialized else "not_initialized"
+        }
+        
+        # Add model file info if it exists
+        if os.path.exists(gguf_analyzer.model_path):
+            try:
+                stat_info = os.stat(gguf_analyzer.model_path)
+                status_info["model_size_mb"] = round(stat_info.st_size / (1024 * 1024), 2)
+                status_info["model_modified"] = stat_info.st_mtime
+            except Exception as e:
+                logger.warning(f"Could not get model file stats: {e}")
+        
+        # Add initialization error handling
+        if not model_initialized:
+            status_info["error"] = "Model not initialized. Try calling the initialization endpoint."
+            status_info["suggestion"] = "POST to /model/initialize to load the model"
+        
+        return status_info
+        
+    except Exception as e:
+        logger.error(f"Error getting model status: {e}")
+        return {
+            "error": str(e),
+            "status": "error",
+            "model_initialized": False
+        }
+
+@app.post("/model/initialize")
+async def initialize_model():
+    """Initialize the GGUF model manually."""
+    try:
+        if gguf_analyzer.model:
+            return {
+                "status": "already_initialized",
+                "message": "GGUF model is already initialized",
+                "model_path": gguf_analyzer.model_path
+            }
+        
+        logger.info("Manual GGUF model initialization requested")
+        start_time = time.time()
+        
+        await gguf_analyzer.initialize()
+        
+        initialization_time = time.time() - start_time
+        
+        if gguf_analyzer.model:
+            return {
+                "status": "success",
+                "message": f"GGUF model initialized successfully in {initialization_time:.2f} seconds",
+                "model_path": gguf_analyzer.model_path,
+                "initialization_time": initialization_time
+            }
+        else:
+            return {
+                "status": "failed",
+                "message": "GGUF model initialization failed",
+                "error": "Model object is None after initialization"
+            }
+            
+    except Exception as e:
+        logger.error(f"Manual model initialization failed: {e}")
+        return {
+            "status": "error",
+            "message": "GGUF model initialization failed",
+            "error": str(e)
+        }
 
 @app.get("/api/resource-stats")
 async def get_resource_statistics():
@@ -948,16 +1030,16 @@ async def get_resource_statistics():
         resource_summary = resource_monitor.get_metrics_summary()
         current_metrics = resource_monitor.get_current_metrics()
         
-        # Add AI service information
-        ai_info = {
-            "model_loaded": ai_analyzer.model_loaded,
-            "model_path": getattr(ai_analyzer, 'model_path', 'unknown') if hasattr(ai_analyzer, 'model_path') else 'unknown',
-            "loading_status": "loaded" if ai_analyzer.model_loaded else "not_loaded"
+        # Add GGUF service information
+        gguf_info = {
+            "model_initialized": bool(gguf_analyzer.model),
+            "model_path": gguf_analyzer.model_path,
+            "initialization_status": "initialized" if gguf_analyzer.model else "not_initialized"
         }
         
         return {
             **resource_summary,
-            "ai_service": ai_info,
+            "gguf_service": gguf_info,
             "active_analyses_details": len(active_analyses),
             "server_uptime": time.time() - getattr(startup_event, '_start_time', time.time()),
             "monitoring_status": "active" if resource_monitor.is_monitoring else "inactive"
