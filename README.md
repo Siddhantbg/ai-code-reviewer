@@ -4,6 +4,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
+[![Docker](https://img.shields.io/badge/gsap-3.13.0-green.svg)](https://gsap.com)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A web application that uses **DeepSeek AI models** to review code, detect bugs, suggest improvements, and provide security analysis. This tool helps developers identify issues in their code and receive actionable feedback with **superior performance compared to GPT-3.5** due to specialized code training.
